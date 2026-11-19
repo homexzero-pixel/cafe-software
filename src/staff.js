@@ -4,7 +4,7 @@ const Staff = (() => {
   const { $, $$, esc, icon, vmark, toast, modal, confirmBox } = UI;
   const D = Data;
   const S = () => D.state, X = () => D.derived();
-  const C = { upi: '#2F5BD0', card: '#E99B12', cash: '#1BAF7A', bar: '#2F5BD0' };
+  const C = { upi: '#8B5A3C', card: '#D59A55', cash: '#4E8A5B', bar: '#8B5A3C' };
   let root = null, page = 'overview', unlocked = false, sideOpen = false, soundOn = false, ticker = 0, pinBuf = '';
   const seen = new Set(); let primed = false;
   const pos = { lines: [], type: 'dine-in', table: '', disc: '', discMode: 'pct', cat: 'All', q: '', ref: null };
@@ -24,15 +24,33 @@ const Staff = (() => {
   const fmtQty = (q, u) => { const a = Math.abs(q); if (u === 'g' && a >= 1000) return (q / 1000).toFixed(a >= 10000 ? 1 : 2).replace(/\.?0+$/, '') + ' kg'; if (u === 'ml' && a >= 1000) return (q / 1000).toFixed(a >= 10000 ? 1 : 2).replace(/\.?0+$/, '') + ' L'; return D.NUM.format(Math.round(q * 100) / 100) + ' ' + u; };
 
   /* ---------------- lock ---------------- */
+  const supa = () => S().backend === 'supabase';
   function lockScreen() {
+    if (supa()) {
+      if (S().staffUser) { unlocked = true; return render(); }
+      root.innerHTML = `<div class="lock"><div class="lock-in">
+      <span class="plate lg">${esc(S().settings.name)}</span>
+      <h1 style="font-size:22px;margin:10px 0 0;font-weight:600">Staff sign-in</h1>
+      <p style="margin:0;color:#E6D6C6">Sign in with the staff account the owner created in Supabase.</p>
+      <form id="supa-login" style="display:grid;gap:10px;width:100%;text-align:left">
+        <input class="in" type="email" name="email" autocomplete="username" placeholder="Email" required>
+        <input class="in" type="password" name="password" autocomplete="current-password" placeholder="Password" required>
+        <button class="btn saffron lg block" type="submit">Sign in</button></form>
+      <a href="#welcome" style="color:#E6D6C6;font-size:14px">Back to start</a></div></div>`;
+      $('#supa-login', root).onsubmit = async (e) => {
+        e.preventDefault(); const f = e.target;
+        try { await D.api.adapter.signIn(f.email.value.trim(), f.password.value); unlocked = true; UI.unlockAudio(); render(); } catch (err) { toast('Email or password is wrong', 'bad'); }
+      };
+      return;
+    }
     const def = String(S().settings.pin || '1234') === '1234';
     root.innerHTML = `<div class="lock"><div class="lock-in">
       <span class="plate lg">${esc(S().settings.name)}</span>
       <h1 style="font-size:22px;margin:10px 0 0;font-weight:600">Staff sign-in</h1>
-      <p style="margin:0;color:#C9D3F0">Enter the 4-digit staff PIN${def ? '. The starting PIN is 1234; change it in Setup.' : '.'}</p>
+      <p style="margin:0;color:#E6D6C6">Enter the 4-digit staff PIN${def ? '. The starting PIN is 1234; change it in Setup.' : '.'}</p>
       <div class="pin-dots" aria-hidden="true">${[0, 1, 2, 3].map((i) => `<i class="${i < pinBuf.length ? 'on' : ''}"></i>`).join('')}</div>
       <div class="pinpad" role="group" aria-label="PIN keypad">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<button data-pin="${n}">${n}</button>`).join('')}<button data-pin="clr" aria-label="Clear">${icon('x')}</button><button data-pin="0">0</button><button data-pin="del" aria-label="Delete">${icon('back')}</button></div>
-      <a href="#welcome" style="color:#C9D3F0;font-size:14px">Back to start</a></div></div>`;
+      <a href="#welcome" style="color:#E6D6C6;font-size:14px">Back to start</a></div></div>`;
   }
   function pinPress(k) {
     if (k === 'clr') pinBuf = ''; else if (k === 'del') pinBuf = pinBuf.slice(0, -1); else if (pinBuf.length < 4) pinBuf += k;
@@ -88,15 +106,15 @@ const Staff = (() => {
     const top = Math.ceil(max / nice) * nice;
     const iw = W - pl - pr, ih = H - pt - pb, n = data.length, slot = iw / n, bw = Math.min(24, slot * 0.62);
     let g = '';
-    for (let v = 0; v <= top + 1e-9; v += nice) { const y = pt + ih - (v / top) * ih; g += `<line x1="${pl}" x2="${W - pr}" y1="${y}" y2="${y}" stroke="#E6E9EF" stroke-width="1"/><text x="${pl - 8}" y="${y + 4}" text-anchor="end" font-size="11" fill="#79829A">${o.fmtAxis ? o.fmtAxis(v) : v}</text>`; }
+    for (let v = 0; v <= top + 1e-9; v += nice) { const y = pt + ih - (v / top) * ih; g += `<line x1="${pl}" x2="${W - pr}" y1="${y}" y2="${y}" stroke="#F0E9E1" stroke-width="1"/><text x="${pl - 8}" y="${y + 4}" text-anchor="end" font-size="11" fill="#8E7D6F">${o.fmtAxis ? o.fmtAxis(v) : v}</text>`; }
     const every = Math.ceil(n / (o.maxLabels || 12));
     data.forEach((d, i) => {
       const x = pl + i * slot + (slot - bw) / 2, h = (d.v / top) * ih, y = pt + ih - h, r = Math.min(4, h / 2, bw / 2);
       const path = h > 0.5 ? `M${x},${pt + ih} V${y + r} Q${x},${y} ${x + r},${y} H${x + bw - r} Q${x + bw},${y} ${x + bw},${y + r} V${pt + ih} Z` : '';
-      g += `<g data-tip="${esc(d.tip || '')}"><rect x="${pl + i * slot}" y="${pt}" width="${slot}" height="${ih}" fill="transparent"/>${path ? `<path d="${path}" fill="${d.hl === false ? '#B9C8EE' : C.bar}"/>` : ''}</g>`;
-      if (i % every === 0 || i === n - 1) g += `<text x="${pl + i * slot + slot / 2}" y="${H - 8}" text-anchor="middle" font-size="11" fill="#79829A">${esc(d.l)}</text>`;
+      g += `<g data-tip="${esc(d.tip || '')}"><rect x="${pl + i * slot}" y="${pt}" width="${slot}" height="${ih}" fill="transparent"/>${path ? `<path d="${path}" fill="${d.hl === false ? '#E3CFB9' : C.bar}"/>` : ''}</g>`;
+      if (i % every === 0 || i === n - 1) g += `<text x="${pl + i * slot + slot / 2}" y="${H - 8}" text-anchor="middle" font-size="11" fill="#8E7D6F">${esc(d.l)}</text>`;
     });
-    g += `<line x1="${pl}" x2="${W - pr}" y1="${pt + ih}" y2="${pt + ih}" stroke="#C9CFDA" stroke-width="1"/>`;
+    g += `<line x1="${pl}" x2="${W - pr}" y1="${pt + ih}" y2="${pt + ih}" stroke="#D9CDC0" stroke-width="1"/>`;
     return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(o.label || 'Chart')}">${g}</svg></div>`;
   }
   function hbars(rows, fmt) {
@@ -285,7 +303,7 @@ const Staff = (() => {
         <div style="margin-top:12px;font-size:16px">Change to return <b class="money" data-change>₹0</b></div>`;
     } else if (method === 'upi') {
       const link = `upi://pay?pa=${encodeURIComponent((s.upiId || '').toLowerCase()).replace('%40', '@')}&pn=${encodeURIComponent(s.upiName || s.name)}&am=${(amount / 100).toFixed(2)}&cu=INR&tn=${encodeURIComponent('Bill ' + ref)}&tr=${encodeURIComponent(ref)}`;
-      body = `<div class="upi-box"><div class="qr">${QR.svg(link, { margin: 1, dark: '#12275F' })}</div><b>Customer scans to pay ${D.money(amount)}</b><span class="muted">UPI ID ${esc(s.upiId)}, reference ${esc(ref)}</span></div>
+      body = `<div class="upi-box"><div class="qr">${QR.svg(link, { margin: 1, dark: '#3E2A1E' })}</div><b>Customer scans to pay ${D.money(amount)}</b><span class="muted">UPI ID ${esc(s.upiId)}, reference ${esc(ref)}</span></div>
         <div class="testnote" style="margin-top:10px">${icon('info', 'sm')}<span>Confirm only after the payment shows in your UPI app or soundbox.</span></div>
         <label class="field" style="margin-top:10px"><span>UPI reference (optional)</span><input class="in" data-uref placeholder="12-digit UTR"></label>`;
     } else {
@@ -630,13 +648,13 @@ const Staff = (() => {
       `<div class="box" style="margin-bottom:14px;display:grid;gap:12px"><div class="grid2" style="grid-template-columns:160px 1fr"><label class="field"><span>Number of tables</span><input class="in" inputmode="numeric" value="${n}" data-tn></label>
         <label class="field"><span>Menu link the QR codes open</span><input class="in" value="${esc(s.portalUrl || '')}" placeholder="${esc(base)}" data-tu><small>Leave empty to use this page’s link. If you host the menu on your own website, paste its address here.</small></label></div>
         <div><button class="btn sm" data-a="tsave">Save</button></div></div>
-      <div class="qrgrid">${Array.from({ length: n }, (_, i) => { const url = `${base}#table-${i + 1}`; return `<div class="qrcard"><b>Table ${i + 1}</b><div class="qr">${QR.svg(url, { margin: 1, dark: '#12275F', label: `QR code for table ${i + 1}` })}</div><span class="faint" style="font-size:12.5px">Scan to see dishes on your table</span><a class="btn xs ghost" href="#table-${i + 1}">Open as Table ${i + 1}</a></div>`; }).join('')}
-      <div class="qrcard"><b>Takeaway</b><div class="qr">${QR.svg(`${base}#menu`, { margin: 1, dark: '#12275F' })}</div><span class="faint" style="font-size:12.5px">For the counter and the window</span><a class="btn xs ghost" href="#menu">Open menu</a></div></div>`;
+      <div class="qrgrid">${Array.from({ length: n }, (_, i) => { const url = `${base}#table-${i + 1}`; return `<div class="qrcard"><b>Table ${i + 1}</b><div class="qr">${QR.svg(url, { margin: 1, dark: '#3E2A1E', label: `QR code for table ${i + 1}` })}</div><span class="faint" style="font-size:12.5px">Scan to see dishes on your table</span><a class="btn xs ghost" href="#table-${i + 1}">Open as Table ${i + 1}</a></div>`; }).join('')}
+      <div class="qrcard"><b>Takeaway</b><div class="qr">${QR.svg(`${base}#menu`, { margin: 1, dark: '#3E2A1E' })}</div><span class="faint" style="font-size:12.5px">For the counter and the window</span><a class="btn xs ghost" href="#menu">Open menu</a></div></div>`;
   }
   function qrSheet() {
     const s = S().settings, n = s.tables || 12, base = portalBase();
-    const card = (title, url) => `<div class="c"><div class="t">${esc(s.name)}</div><div class="q">${QR.svg(url, { margin: 1, dark: '#12275F' })}</div><div class="n">${esc(title)}</div><div class="s">Scan to see today’s dishes on your table in 3D and order</div></div>`;
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(s.name)} table QR codes</title><style>@page{size:A4;margin:12mm}body{font-family:system-ui,sans-serif;margin:0;color:#19213A}.g{display:grid;grid-template-columns:repeat(3,1fr);gap:8mm}.c{border:1.5px solid #1B3790;border-radius:4mm;padding:6mm;text-align:center;break-inside:avoid}.t{font-weight:700;color:#1B3790;font-size:14pt}.q svg{width:42mm;height:42mm}.n{font-size:20pt;font-weight:700}.s{font-size:9pt;color:#4B5470}</style></head><body><div class="g">
+    const card = (title, url) => `<div class="c"><div class="t">${esc(s.name)}</div><div class="q">${QR.svg(url, { margin: 1, dark: '#3E2A1E' })}</div><div class="n">${esc(title)}</div><div class="s">Scan to see today’s dishes on your table in 3D and order</div></div>`;
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(s.name)} table QR codes</title><style>@page{size:A4;margin:12mm}body{font-family:system-ui,sans-serif;margin:0;color:#2B1F17}.g{display:grid;grid-template-columns:repeat(3,1fr);gap:8mm}.c{border:1.5px solid #6F4A2F;border-radius:4mm;padding:6mm;text-align:center;break-inside:avoid}.t{font-weight:700;color:#6F4A2F;font-size:14pt}.q svg{width:42mm;height:42mm}.n{font-size:20pt;font-weight:700}.s{font-size:9pt;color:#62513F}</style></head><body><div class="g">
       ${Array.from({ length: n }, (_, i) => card(`Table ${i + 1}`, `${base}#table-${i + 1}`)).join('')}${card('Takeaway', `${base}#menu`)}</div></body></html>`;
     UI.download(`table-qr-codes.html`, html, 'text/html');
   }
@@ -660,7 +678,7 @@ const Staff = (() => {
         <div class="box"><h2>Orders</h2><div class="grid2">${f('prefix', 'Order ID prefix', 'maxlength="4" style="text-transform:uppercase"')}${f('tables', 'Tables', 'inputmode="numeric"')}</div>
           <label class="row" style="justify-content:space-between"><span>Serve dishes only in their set hours</span><span class="switch"><input type="checkbox" name="timeMenus" ${s.timeMenus !== false ? 'checked' : ''}></span></label>
           <label class="field"><span>Staff PIN</span><input class="in" name="pin" inputmode="numeric" maxlength="4" value="${esc(s.pin || '1234')}"></label></div>
-        <div class="box"><h2>Data</h2><p class="muted" style="margin:0">${S().mode === 'cloud' ? 'Orders, menu and stock are shared live between every device that opens this page while signed in to Claude.' : 'Data is saved in this browser. To share orders between phones and the counter, connect a shared database or open this page inside Claude.'}</p>
+        <div class="box"><h2>Data</h2><p class="muted" style="margin:0">${supa() ? 'Orders, menu and stock live in your Supabase project and sync to every phone and counter in real time.' : S().mode === 'cloud' ? 'Orders, menu and stock are shared live between every device that opens this page while signed in to Claude.' : 'Data is saved in this browser. To share orders between phones and the counter, connect a shared database or open this page inside Claude.'}</p>
           <div class="row wrap"><button type="button" class="btn ghost sm" data-a="sample">${icon('chart', 'sm')}Add sample sales</button>${demo ? `<button type="button" class="btn ghost sm" data-a="unsample">${icon('trash', 'sm')}Remove ${demo} sample sales</button>` : ''}
           <button type="button" class="btn ghost sm" data-a="seed">${icon('refresh', 'sm')}${S().menu.length ? 'Reset menu and stock' : 'Load starter menu'}</button><button type="button" class="btn ghost sm" data-a="export">${icon('download', 'sm')}Export all data</button></div></div>
       </form>`;
@@ -679,7 +697,7 @@ const Staff = (() => {
 
   /* ---------------- actions ---------------- */
   async function act(a, el) {
-    if (a === 'lock') { unlocked = false; try { sessionStorage.removeItem('km.staff'); } catch (e) { /* ignore */ } render(); }
+    if (a === 'lock') { if (supa()) D.api.adapter.signOut().catch(() => {}); unlocked = false; try { sessionStorage.removeItem('km.staff'); } catch (e) { /* ignore */ } render(); }
     if (a === 'side') { sideOpen = !sideOpen; $('.side', root).classList.toggle('open', sideOpen); }
     if (a === 'sound') { soundOn = !soundOn; if (soundOn) { UI.unlockAudio(); UI.chime(); } render(); }
     if (a === 'pclear') { pos.lines = []; pos.disc = ''; refreshTicket(); }
@@ -702,7 +720,7 @@ const Staff = (() => {
       const start = Math.max(1000, ...S().orders.map((o) => o.no || 0));
       const list = D.sampleOrders(S().menu.length ? S().menu : D.defaultMenu(), S().settings, start, 14);
       toast(`Adding ${list.length} sample sales…`, 'ok', 2000);
-      try { await D.api.putOrders(list, (i, n) => toast(`Added ${i} of ${n}…`, 'ok', 1200)); if (S().mode === 'cloud') await D.api.adapter.db.doc('meta/counter').set({ no: start + list.length, at: Date.now() }); toast(`${list.length} sample sales added`); } catch (e) { toast('Could not add all sample sales', 'bad'); }
+      try { await D.api.putOrders(list, (i, n) => toast(`Added ${i} of ${n}…`, 'ok', 1200)); if (D.api.adapter.setCounter) await D.api.adapter.setCounter(start + list.length); else if (S().mode === 'cloud') await D.api.adapter.db.doc('meta/counter').set({ no: start + list.length, at: Date.now() }); toast(`${list.length} sample sales added`); } catch (e) { toast('Could not add all sample sales', 'bad'); }
     }
     if (a === 'unsample') {
       const ids = S().orders.filter((o) => o.demo).map((o) => o.id);

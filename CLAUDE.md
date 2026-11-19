@@ -58,6 +58,7 @@ Document paths: `cafe/settings`, `menu/{id}`, `stock/{id}`, `orders/{id}`, `ledg
 
 `Data.init()` picks an adapter:
 - Inside the Claude artifact viewer it uses the runtime's shared database (`claude.use('db')`, a Firestore-style API). The order counter uses a short lease (`acquire`).
+- With `config.json` (Supabase URL + anon key, see `config.example.json`) the build sets `window.KM_CONFIG` and it uses **Supa**: Supabase tables (`supabase/schema.sql`), Realtime for live updates, `next_order_no()` RPC for the counter, `customer_pay()` RPC for guest payment claims, and Supabase Auth email sign-in for staff (a row in `staff`). Seed with `node tools/export-seed.js --sql` then run `supabase/seed.sql`.
 - Anywhere else it uses **Local**: localStorage plus BroadcastChannel, so tabs in one browser stay in sync, but phones and the counter do not.
 
 **To sync real devices on your own hosting**, add an adapter with the same methods as `Cloud` in `data.js` (`setSettings, putDish, delDish, putStock, delStock, nextNo, putOrder, patchOrder, putOrders, delOrders, addLedger, seed`) and select it in `Data.init()`. Firebase Firestore's API is almost identical to the one `Cloud` already uses; replace `acquire` with a transaction for `nextNo`. Supabase works too, with realtime subscriptions per table. `node tools/export-seed.js` exports the starter data as write operations.
@@ -70,10 +71,10 @@ Document paths: `cafe/settings`, `menu/{id}`, `stock/{id}`, `orders/{id}`, `ledg
 
 ## Next steps
 
-1. Shared backend (Firestore or Supabase) for multi-device sync, plus real staff accounts instead of the PIN.
-2. Razorpay Checkout for card and UPI with webhook confirmation. The card form is test mode only (4111 1111 1111 1111 passes, 4000 0000 0000 0002 is declined).
+1. Role-based screens (owner, cashier, kitchen) on top of the Supabase staff accounts; move customer names out of the publicly readable orders table.
+2. Razorpay Checkout in the portal (the webhook is ready in `supabase/functions/razorpay-webhook`). The card form is test mode only (4111 1111 1111 1111 passes, 4000 0000 0000 0002 is declined).
 3. Real dish scans: upload a GLB per dish (with a USDZ for iPhone Quick Look) and load it with a glTF loader, keeping the procedural models as fallback.
 4. Thermal printer support (ESC/POS) for KOTs and bills, offline mode (PWA), multiple outlets.
 5. Replace the placeholder GSTIN, FSSAI number, UPI ID and address in `SETTINGS` (`data.js`) or in Setup.
 
-`DESIGN.md` records the visual direction: cobalt and saffron, a marble-table motif, Yatra One for the wordmark and Anek Latin for the interface.
+`DESIGN.md` records the visual direction: coffee brown and caramel on warm white, a marble-table motif, Yatra One for the wordmark and Anek Latin for the interface.

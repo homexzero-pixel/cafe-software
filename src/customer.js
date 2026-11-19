@@ -234,7 +234,7 @@ const Cust = (() => {
     let n = 1, note = '';
     const m = modal({
       title: d.name, cls: 'dish-sheet',
-      body: `<div class="dsheet-stage"><div class="stage" data-stage="detail"></div><span class="hint">Drag to turn, pinch to zoom</span><a class="btn white sm" href="#ar" data-view-ar style="position:absolute;top:12px;right:14px;box-shadow:0 2px 8px rgba(18,39,95,.15)">${icon('camera', 'sm')}See it on my table</a></div>
+      body: `<div class="dsheet-stage"><div class="stage" data-stage="detail"></div><span class="hint">Drag to turn, pinch to zoom</span><a class="btn white sm" href="#ar" data-view-ar style="position:absolute;top:12px;right:14px;box-shadow:0 2px 8px rgba(62,42,30,.15)">${icon('camera', 'sm')}See it on my table</a></div>
         <div style="margin-top:14px" data-info></div>`,
       foot: '',
       onClose: () => { openSheet = null; Viewer.unmount($('[data-stage=detail]', m.el)); mountHero(); },
@@ -334,7 +334,7 @@ const Cust = (() => {
     const link = upiLink(total, ref, existing ? `Order ${existing.id}` : `${s.name} ${cart.type === 'dine-in' && cart.table ? 'Table ' + cart.table : 'order'}`);
     const m = modal({
       title: `Pay ${D.money(total)} by UPI`,
-      body: `<div class="upi-box"><div class="qr">${QR.svg(link, { margin: 1, dark: '#12275F' })}</div>
+      body: `<div class="upi-box"><div class="qr">${QR.svg(link, { margin: 1, dark: '#3E2A1E' })}</div>
           <b>Scan with any UPI app</b><span class="muted" style="text-align:center">Paying ${esc(s.upiName || s.name)}<br>UPI ID <b>${esc(s.upiId)}</b>, reference ${esc(ref)}</span>
           <a class="btn quiet" href="${esc(link)}">${icon('upi')}Open a UPI app on this phone</a></div>
         <div class="testnote" style="margin-top:12px">${icon('info', 'sm')}<span>After paying, tap “I’ve paid”. Staff confirm UPI payments in their app before marking the bill paid.</span></div>`,
@@ -351,7 +351,7 @@ const Cust = (() => {
       title: `Pay ${D.money(total)} by card`,
       body: `<div class="testnote" style="margin-bottom:14px">${icon('info', 'sm')}<span>Test mode, no money moves. Use card 4111 1111 1111 1111 with any future expiry and CVV. Card numbers are never stored.</span></div>
         <form class="cardform" novalidate>
-          <label class="field"><span>Card number <b data-brand style="color:var(--cobalt)"></b></span><input class="in cardnum" inputmode="numeric" autocomplete="cc-number" placeholder="1234 5678 9012 3456" maxlength="23" data-cn autofocus></label>
+          <label class="field"><span>Card number <b data-brand style="color:var(--brand)"></b></span><input class="in cardnum" inputmode="numeric" autocomplete="cc-number" placeholder="1234 5678 9012 3456" maxlength="23" data-cn autofocus></label>
           <div class="grid2"><label class="field"><span>Expiry</span><input class="in" inputmode="numeric" placeholder="MM/YY" maxlength="5" autocomplete="cc-exp" data-ce></label>
           <label class="field"><span>CVV</span><input class="in" inputmode="numeric" maxlength="4" placeholder="123" autocomplete="cc-csc" data-cv></label></div>
           <label class="field"><span>Name on card</span><input class="in" autocomplete="cc-name" data-cnm></label>
@@ -435,7 +435,7 @@ const Cust = (() => {
   function counterSheet(o) {
     modal({
       title: 'Show this at the counter',
-      body: `<div class="counter-show"><div class="bigid" style="font-size:58px">${esc(o.id)}</div><div class="qr">${QR.svg(o.id, { margin: 2, dark: '#12275F' })}</div>
+      body: `<div class="counter-show"><div class="bigid" style="font-size:58px">${esc(o.id)}</div><div class="qr">${QR.svg(o.id, { margin: 2, dark: '#3E2A1E' })}</div>
         <div style="font-size:20px;font-weight:700" class="money">${D.money(o.total)}</div><div class="muted">${o.table ? `Table ${o.table}` : 'Takeaway'}, ${((n) => `${n} item${n === 1 ? '' : 's'}`)((o.items || []).reduce((s2, l) => s2 + l.qty, 0))}</div></div>`,
       foot: false,
     });
@@ -542,7 +542,7 @@ const Invoice = (() => {
   }
   function html(o, s) {
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(o.id)} bill</title><style>
-      body{margin:0;padding:24px;background:#eef0f3;font-family:ui-monospace,Menlo,Consolas,monospace}
+      body{margin:0;padding:24px;background:#F3EDE6;font-family:ui-monospace,Menlo,Consolas,monospace}
       .receipt{font-size:12.5px;line-height:1.45;background:#fff;color:#111;max-width:320px;margin:0 auto;padding:16px 14px;border-radius:6px}
       .c{text-align:center}h3{font-family:Georgia,serif;font-weight:400;font-size:21px;margin:0}.hr{border-top:1px dashed #999;margin:8px 0}
       table{width:100%;border-collapse:collapse}td{padding:1px 0;vertical-align:top}td.r{text-align:right;white-space:nowrap}.tot td{font-weight:700;font-size:14px}.small{font-size:11px;color:#444}

@@ -318,12 +318,95 @@ const Data = (() => {
       if (!state.settings || !state.settings._saved) await this.setSettings({ _saved: true });
     },
   };
+
+  /* Supabase adapter (your own hosting): set window.KM_CONFIG = { supabaseUrl, supabaseKey } (see config.example.json).
+     Tables hold one jsonb `data` column per row plus a few indexed columns; schema in supabase/schema.sql.
+     Live updates come from Supabase Realtime, so a portal order shows on the kitchen board straight away. */
+  const Supa = {
+    sb: null, chan: null, rows: { settings: null, dishes: new Map(), ingredients: new Map(), orders: new Map(), stock_movements: new Map() },
+    async init(cfg) {
+      state.mode = 'connecting'; state.backend = 'supabase'; notify();
+      const mod = await import(cfg.supabaseLib || 'https://esm.sh/@supabase/supabase-js@2');
+      this.sb = mod.createClient(cfg.supabaseUrl, cfg.supabaseKey, { auth: { persistSession: true } });
+      try { const { data } = await this.sb.auth.getSession(); state.staffUser = data && data.session ? data.session.user.email : null; } catch (e) { state.staffUser = null; }
+      this.sb.auth.onAuthStateChange((_e, sess) => { state.staffUser = sess ? sess.user.email : null; notify(); });
+      this.chan = this.sb.channel('cafe');
+      for (const t of ['settings', 'dishes', 'ingredients', 'orders', 'stock_movements']) {
+        this.chan.on('postgres_changes', { event: '*', schema: 'public', table: t }, (ev) => this.change(t, ev));
+      }
+      this.chan.subscribe((st) => { if (st === 'SUBSCRIBED') { state.error = null; } else if (st === 'CHANNEL_ERROR' || st === 'TIMED_OUT') { state.error = 'unavailable'; } notify(); });
+      await this.reload();
+      state.mode = 'cloud'; state.ready = true; state.synced = true; notify();
+      // re-read after the tab wakes up, in case events were missed while asleep
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) this.reload().catch(() => {}); });
+    },
+    async reload() {
+      const q = (t, f) => f(this.sb.from(t).select('id,data')).then((r) => { if (r.error) throw r.error; return r.data; });
+      const [st, ds, ing, ord, led] = await Promise.all([
+        q('settings', (x) => x.eq('id', 'cafe')), q('dishes', (x) => x), q('ingredients', (x) => x),
+        q('orders', (x) => x.order('created_at', { ascending: false }).limit(800)), q('stock_movements', (x) => x.order('at', { ascending: false }).limit(400)),
+      ]);
+      this.rows.settings = st[0] ? st[0].data : {};
+      for (const [k, list] of [['dishes', ds], ['ingredients', ing], ['orders', ord], ['stock_movements', led]]) { const m = new Map(); for (const r of list) m.set(r.id, Object.assign({}, r.data, { id: r.id })); this.rows[k] = m; }
+      this.apply();
+    },
+    change(t, ev) {
+      if (t === 'settings') { if (ev.new && ev.new.id === 'cafe') this.rows.settings = ev.new.data; }
+      else if (ev.eventType === 'DELETE') this.rows[t].delete(ev.old.id);
+      else this.rows[t].set(ev.new.id, Object.assign({}, ev.new.data, { id: ev.new.id }));
+      this.apply();
+    },
+    apply() {
+      state.settings = Object.assign({}, SETTINGS, this.rows.settings || {});
+      state.menu = sortMenu([...this.rows.dishes.values()]); state.stock = [...this.rows.ingredients.values()];
+      state.orders = sortOrders([...this.rows.orders.values()]); state.ledger = [...this.rows.stock_movements.values()].sort((a, b) => b.at - a.at);
+      notify();
+    },
+    clean(o) { return JSON.parse(JSON.stringify(o)); },
+    async up(t, row) { const r = await this.sb.from(t).upsert(row); if (r.error) { handleWriteError(r.error); throw r.error; } },
+    async del(t, ids) { const r = await this.sb.from(t).delete().in('id', ids); if (r.error) { handleWriteError(r.error); throw r.error; } },
+    orderRow(o) { const { id, ...rest } = o; return { id, created_at: new Date(o.createdAt).toISOString(), status: o.status, table_no: o.table ? String(o.table) : null, total_paise: o.total, data: this.clean(rest) }; },
+    setSettings(patch) { const next = Object.assign({}, state.settings, patch); this.rows.settings = next; this.apply(); return this.up('settings', { id: 'cafe', data: this.clean(next) }); },
+    putDish(d) { const { id, ...rest } = d; return this.up('dishes', { id, data: this.clean(rest) }); },
+    delDish(id) { return this.del('dishes', [id]); },
+    putStock(x) { const { id, qty, used, in: _i, out: _o, state: _s, ...rest } = x; return this.up('ingredients', { id, data: this.clean(rest) }); },
+    delStock(id) { return this.del('ingredients', [id]); },
+    async nextNo() {
+      const floor = Math.max(1000, ...state.orders.map((o) => o.no || 0));
+      const r = await this.sb.rpc('next_order_no', { floor_no: floor });
+      if (r.error) { handleWriteError(r.error); throw r.error; }
+      return Number(r.data);
+    },
+    async setCounter(no) { const r = await this.sb.rpc('set_order_no', { new_no: no }); if (r.error) throw r.error; },
+    putOrder(o) { this.rows.orders.set(o.id, o); this.apply(); return this.up('orders', this.orderRow(o)); },
+    async patchOrder(id, patch) {
+      const cur = this.rows.orders.get(id); if (!cur) return;
+      const next = Object.assign({}, cur, this.clean(patch)); this.rows.orders.set(id, next); this.apply();
+      // guests may only change the payment of their own order; the database checks this in customer_pay()
+      if (!state.staffUser && Object.keys(patch).every((k) => k === 'pay')) { const r = await this.sb.rpc('customer_pay', { order_id: id, pay: this.clean(patch.pay) }); if (r.error) { handleWriteError(r.error); throw r.error; } return; }
+      return this.up('orders', this.orderRow(next));
+    },
+    async putOrders(list, progress) { for (let i = 0; i < list.length; i += 100) { await this.up('orders', list.slice(i, i + 100).map((o) => this.orderRow(o))); if (progress) progress(Math.min(i + 100, list.length), list.length); } },
+    async delOrders(ids, progress) { for (let i = 0; i < ids.length; i += 100) { await this.del('orders', ids.slice(i, i + 100)); if (progress) progress(Math.min(i + 100, ids.length), ids.length); } },
+    addLedger(e) { const { id, ...rest } = e; return this.up('stock_movements', { id, at: new Date(e.at).toISOString(), data: this.clean(rest) }); },
+    async seed() {
+      await this.up('dishes', defaultMenu().map((d) => { const { id, ...rest } = d; return { id, data: this.clean(rest) }; }));
+      await this.up('ingredients', defaultStock().map((x) => { const { id, ...rest } = x; return { id, data: this.clean(rest) }; }));
+      if (!this.rows.settings || !this.rows.settings._saved) await this.setSettings({ _saved: true });
+    },
+    async signIn(email, password) { const r = await this.sb.auth.signInWithPassword({ email, password }); if (r.error) throw r.error; state.staffUser = r.data.user.email; notify(); },
+    async signOut() { await this.sb.auth.signOut(); state.staffUser = null; notify(); },
+  };
   let writeErrorHandler = null;
   function handleWriteError(e) { if (writeErrorHandler) writeErrorHandler(e); }
 
   let adapter = Local;
   async function init() {
-    // Inside the Claude artifact viewer a `claude` runtime offers a shared database; elsewhere use this browser.
+    // Your own Supabase project wins when configured; inside the Claude artifact viewer use its shared database; else this browser.
+    const cfg = window.KM_CONFIG || {};
+    if (cfg.supabaseUrl && cfg.supabaseKey) {
+      try { adapter = Supa; return await Supa.init(cfg); } catch (e) { console.error('Supabase connection failed, using this browser', e); state.backend = null; state.error = null; }
+    }
     const hasRuntime = typeof window.claude === 'object' && window.claude && typeof window.claude.use === 'function';
     if (!hasRuntime) { adapter = Local; return Local.init(); }
     state.ready = false; state.mode = 'connecting'; notify();

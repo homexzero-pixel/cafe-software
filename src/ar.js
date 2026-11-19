@@ -223,7 +223,7 @@ const AR = (() => {
     if (!d) { card.innerHTML = `<p style="margin:0">Nothing in this category is available right now. Pick another category.</p>`; return; }
     const q = o.getQty(d.id), st2 = o.status(d);
     const act = !st2.ok ? `<span class="chip bad">${esc(st2.short || st2.label)}</span>`
-      : q ? `<div class="stepper lg" style="margin-left:auto;background:var(--saffron);color:var(--deeper)"><button data-a="dec" aria-label="Remove one">${icon('minus')}</button><span>${q}</span><button data-a="inc" aria-label="Add one more">${icon('plus')}</button></div>`
+      : q ? `<div class="stepper lg" style="margin-left:auto;background:var(--caramel);color:var(--deeper)"><button data-a="dec" aria-label="Remove one">${icon('minus')}</button><span>${q}</span><button data-a="inc" aria-label="Add one more">${icon('plus')}</button></div>`
         : `<button class="btn saffron" data-a="add">${icon('plus')}Add ${Data.rupees(d.price)}</button>`;
     card.innerHTML = `<div class="nm">${vmark(d.veg)}<span>${esc(d.name)}</span></div>
       <p>${esc(d.desc || '')}</p>

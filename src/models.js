@@ -4,7 +4,7 @@ const Dishes = (() => {
   const { lathe, arc, sphere, dome, cylinder, puck, torus, disc, roundedBox, extrude, tube, displace, computeNormals, merge, M4, V, fbm, noise3, rng, canvas, pixels, bands, Geo } = E3;
   const T = M4.T, S = M4.S, Rx = M4.Rx, Ry = M4.Ry, Rz = M4.Rz, C = (...m) => (m.length === 1 ? m[0] : M4.chain(...m));
   const TAU = Math.PI * 2;
-  const COBALT = '#1B3790', SAFFRON = '#F0A81C';
+  const COBALT = '#6F4A2F', SAFFRON = '#D59A55';
   const P = (geo, mat, matrix) => ({ geo, mat, matrix });
 
   /* ---------- textures (lazy, cached) ---------- */
@@ -159,14 +159,14 @@ const Dishes = (() => {
     ];
     const f = fracs(prof);
     const key = 'plateBand' + f[7].toFixed(4) + f[10].toFixed(4);
-    const m = mat('plate' + key, { color: '#FFFFFF', rough: 0.14, coat: 0.6, wrap: 0.05, map: tex(key, () => hardBands('#F5F4F0', [[f[8] + 0.002, f[10], '#173080']])) });
+    const m = mat('plate' + key, { color: '#FFFFFF', rough: 0.14, coat: 0.6, wrap: 0.05, map: tex(key, () => hardBands('#F5F4F0', [[f[8] + 0.002, f[10], '#6F4A2F']])) });
     return { part: P(lathe(prof, { segs: 72 }), m), top: h * 0.32 };
   }
   function bowl(R, H) {
     const prof = [[0, 0.004], [R * 0.33, 0.004], [R * 0.35, 0], [R * 0.41, 0], [R * 0.44, 0.004], [R * 0.6, H * 0.5], [R * 0.7, H * 0.8], [R * 0.8, H * 0.88], [R * 0.97, H * 0.93], [R, H * 0.97], [R * 0.995, H], [R * 0.975, H * 1.005], [R * 0.93, H * 0.985], [R * 0.8, H * 0.95], [R * 0.7, H * 0.88], [R * 0.6, H * 0.6], [R * 0.45, H * 0.22], [R * 0.3, H * 0.17], [0, H * 0.17]];
     const f = fracs(prof);
     const key = 'bowlBand' + f[9].toFixed(4);
-    const m = mat('bowl' + key, { color: '#FFFFFF', rough: 0.14, coat: 0.6, map: tex(key, () => hardBands('#F5F4F0', [[f[10], f[12], '#173080']])) });
+    const m = mat('bowl' + key, { color: '#FFFFFF', rough: 0.14, coat: 0.6, map: tex(key, () => hardBands('#F5F4F0', [[f[10], f[12], '#6F4A2F']])) });
     return { part: P(lathe(prof, { segs: 72 }), m), floor: H * 0.17 };
   }
   function katori(r = 0.03, h = 0.022) {
