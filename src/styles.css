@@ -517,3 +517,9 @@ button.chip:hover{background:var(--brand-t2)}
 .ctl label small{display:block;color:var(--ink-3);font-size:12.5px}
 .notice{display:flex;gap:10px;align-items:flex-start;background:var(--caramel-t);color:var(--caramel-ink);padding:11px 16px;font-size:14px;font-weight:550}
 .notice.closed{background:var(--danger-t);color:#9E2A17}
+
+/* roles */
+.whoami{display:flex;gap:8px;align-items:flex-start;font-size:13px;color:#E2D2C2;padding:4px 8px;line-height:1.3}
+.whoami b{color:#fff}
+.tbl.perm td:not(:first-child),.tbl.perm th:not(:first-child){text-align:center;width:64px}
+.tbl.perm .ic{color:var(--leaf)}

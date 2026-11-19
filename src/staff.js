@@ -5,15 +5,17 @@ const Staff = (() => {
   const D = Data;
   const S = () => D.state, X = () => D.derived();
   const C = { upi: '#8B5A3C', card: '#D59A55', cash: '#4E8A5B', bar: '#8B5A3C' };
-  let root = null, page = 'overview', unlocked = false, sideOpen = false, soundOn = false, ticker = 0, pinBuf = '';
+  let root = null, page = 'overview', sideOpen = false, soundOn = false, ticker = 0, pinBuf = '';
   const seen = new Set(); let primed = false;
   const pos = { lines: [], type: 'dine-in', table: '', disc: '', discMode: 'pct', cat: 'All', q: '', ref: null, phone: '', redeem: false };
   const bf = { range: 'today', status: 'all', q: '' }, mf = { q: '', cat: 'All' }, sf = { tab: 'items', q: '' }, rf = { range: '7d' }, kf = { type: 'all' };
-  try { unlocked = sessionStorage.getItem('km.staff') === '1'; } catch (e) { unlocked = false; }
+  // who is signed in on this device: a team member id (PIN), or the Supabase account
+  let meId = null, pinFails = 0, pinWaitUntil = 0;
+  try { meId = sessionStorage.getItem('km.staff'); if (meId === '1') meId = null; } catch (e) { meId = null; }
 
   const PAGES = [
     ['overview', 'home', 'Overview'], ['orders', 'bell', 'Orders'], ['billing', 'register', 'Billing'], ['bills', 'receipt', 'Bills'],
-    ['menu', 'utensils', 'Menu'], ['stock', 'box', 'Stock'], ['reports', 'chart', 'Reports'], ['board', 'tv', 'Pickup screen'], ['app', 'bag', 'Customer app'], ['tables', 'qr', 'Tables & QR'], ['setup', 'sliders', 'Setup'],
+    ['menu', 'utensils', 'Menu'], ['stock', 'box', 'Stock'], ['reports', 'chart', 'Reports'], ['board', 'tv', 'Pickup screen'], ['app', 'bag', 'Customer app'], ['team', 'user', 'Team'], ['tables', 'qr', 'Tables & QR'], ['setup', 'sliders', 'Setup'],
   ];
   const SPLIT = window.KM_APP === 'cafe';
   // in the standalone dashboard (cafe.html) routes are #overview, #orders...; in the combined demo they are #staff, #staff-orders...
@@ -30,9 +32,38 @@ const Staff = (() => {
 
   /* ---------------- lock ---------------- */
   const supa = () => S().backend === 'supabase';
+  function me() {
+    if (supa()) return S().staffUser ? { id: 'supa', name: S().staffName || S().staffUser, role: D.ROLES[S().staffRole] ? S().staffRole : 'staff' } : null;
+    if (!meId) return null;
+    return D.team(S().settings).find((m) => m.id === meId && m.active !== false) || null;
+  }
+  const who = () => (me() || {}).name || 'staff';
+  const canDo = (perm) => { const m = me(); return !!m && D.can(m.role, perm); };
+  const allowed = (p) => { const m = me(); return !!m && D.ROLES[m.role].pages.includes(p); };
+  // an owner types their PIN to allow one restricted action (refund, cancelling a paid bill, a big discount)
+  function ownerApprove(what) {
+    const m0 = me(); if (m0 && m0.role === 'owner') return Promise.resolve(m0);
+    return new Promise((res) => {
+      let done = false;
+      const m = modal({ title: 'Owner approval', body: `<p class="muted" style="margin-top:0">${esc(what)} needs an owner. Ask an owner to enter their PIN.</p>
+        <label class="field"><span>Owner PIN</span><input class="in" type="password" inputmode="numeric" maxlength="4" autocomplete="off" data-opin autofocus style="font-size:22px;letter-spacing:.4em;max-width:160px"></label>`,
+        actions: [{ label: 'Cancel' }, { label: 'Approve', cls: 'saffron', onClick: (mm) => {
+          const pin = $('[data-opin]', mm.el).value.trim(), o = /^\d{4}$/.test(pin) ? D.findByPin(S().settings, pin) : null;
+          if (!o || o.role !== 'owner') { toast('That is not an owner PIN', 'bad'); $('[data-opin]', mm.el).value = ''; return false; }
+          done = true; res(o);
+        } }], onClose: () => { if (!done) res(null); } });
+      const i = $('[data-opin]', m.el); i.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); m.foot.lastChild.click(); } });
+    });
+  }
+  // runs fn(approver) if the signed-in person may do perm, or after an owner approves
+  async function guarded(perm, what, fn) {
+    if (canDo(perm)) return fn(null);
+    const o = await ownerApprove(what); if (o) return fn(o);
+    return undefined;
+  }
   function lockScreen() {
     if (supa()) {
-      if (S().staffUser) { unlocked = true; return render(); }
+      if (S().staffUser) return render();
       root.innerHTML = `<div class="lock"><div class="lock-in">
       <span class="plate lg">${esc(S().settings.name)}</span>
       <h1 style="font-size:22px;margin:10px 0 0;font-weight:600">Staff sign-in</h1>
@@ -44,15 +75,16 @@ const Staff = (() => {
       ${SPLIT ? '' : '<a href="#welcome" style="color:#E6D6C6;font-size:14px">Back to start</a>'}</div></div>`;
       $('#supa-login', root).onsubmit = async (e) => {
         e.preventDefault(); const f = e.target;
-        try { await D.api.adapter.signIn(f.email.value.trim(), f.password.value); unlocked = true; UI.unlockAudio(); render(); } catch (err) { toast('Email or password is wrong', 'bad'); }
+        try { await D.api.adapter.signIn(f.email.value.trim(), f.password.value); UI.unlockAudio(); render(); } catch (err) { toast('Email or password is wrong', 'bad'); }
       };
       return;
     }
-    const def = String(S().settings.pin || '1234') === '1234';
+    const t = D.team(S().settings), def = t.length === 1 && t[0].legacy && String(S().settings.pin || '1234') === '1234';
+    const wait = Math.ceil((pinWaitUntil - Date.now()) / 1000);
     root.innerHTML = `<div class="lock"><div class="lock-in">
       <span class="plate lg">${esc(S().settings.name)}</span>
       <h1 style="font-size:22px;margin:10px 0 0;font-weight:600">Staff sign-in</h1>
-      <p style="margin:0;color:#E6D6C6">Enter the 4-digit staff PIN${def ? '. The starting PIN is 1234; change it in Setup.' : '.'}</p>
+      <p style="margin:0;color:#E6D6C6">${wait > 0 ? `Too many wrong PINs. Try again in ${wait} seconds.` : `Enter your 4-digit PIN${def ? '. The owner’s starting PIN is 1234; add your team and change it on the Team page.' : '.'}`}</p>
       <div class="pin-dots" aria-hidden="true">${[0, 1, 2, 3].map((i) => `<i class="${i < pinBuf.length ? 'on' : ''}"></i>`).join('')}</div>
       <div class="pinpad" role="group" aria-label="PIN keypad">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<button data-pin="${n}">${n}</button>`).join('')}<button data-pin="clr" aria-label="Clear">${icon('x')}</button><button data-pin="0">0</button><button data-pin="del" aria-label="Delete">${icon('back')}</button></div>
       ${SPLIT ? '' : '<a href="#welcome" style="color:#E6D6C6;font-size:14px">Back to start</a>'}</div></div>`;
@@ -60,7 +92,10 @@ const Staff = (() => {
   function pinPress(k) {
     if (k === 'clr') pinBuf = ''; else if (k === 'del') pinBuf = pinBuf.slice(0, -1); else if (pinBuf.length < 4) pinBuf += k;
     if (pinBuf.length === 4) {
-      if (pinBuf === String(S().settings.pin || '1234')) { unlocked = true; pinBuf = ''; try { sessionStorage.setItem('km.staff', '1'); } catch (e) { /* ignore */ } UI.unlockAudio(); render(); return; }
+      if (Date.now() < pinWaitUntil) { pinBuf = ''; return lockScreen(); }
+      const m = D.findByPin(S().settings, pinBuf);
+      if (m) { meId = m.id; pinBuf = ''; pinFails = 0; try { sessionStorage.setItem('km.staff', m.id); } catch (e) { /* ignore */ } UI.unlockAudio(); toast(`Hello ${m.name}`, 'ok', 1500); render(); return; }
+      if (++pinFails >= 5) { pinFails = 0; pinWaitUntil = Date.now() + 30000; setTimeout(() => { if (!me()) lockScreen(); }, 30500); }
       lockScreen(); const p = $('.pin-dots', root); p.classList.add('shake'); setTimeout(() => { pinBuf = ''; lockScreen(); }, 420); return;
     }
     lockScreen();
@@ -73,18 +108,20 @@ const Staff = (() => {
     const sync = mode === 'cloud' ? (S().error ? ['err', 'Sync problem, retrying'] : S().synced ? ['', 'Synced across devices'] : ['local', 'Connecting…']) : ['local', 'Saved on this device'];
     return `<nav class="side${sideOpen ? ' open' : ''}" aria-label="Staff">
       <span class="plate">${esc(S().settings.name)}</span>
-      ${PAGES.map(([k, ic, l]) => `<a href="${href(k)}" ${page === k ? 'aria-current="page"' : ''}>${icon(ic)}<span>${l}</span>${k === 'orders' && nNew ? `<span class="badge">${nNew}</span>` : ''}${k === 'stock' && nLow ? `<span class="badge" style="background:#FFD9D2;color:#7A1E10">${nLow}</span>` : ''}</a>`).join('')}
+      ${PAGES.filter(([k]) => allowed(k)).map(([k, ic, l]) => `<a href="${href(k)}" ${page === k ? 'aria-current="page"' : ''}>${icon(ic)}<span>${l}</span>${k === 'orders' && nNew ? `<span class="badge">${nNew}</span>` : ''}${k === 'stock' && nLow ? `<span class="badge" style="background:#FFD9D2;color:#7A1E10">${nLow}</span>` : ''}</a>`).join('')}
       <div class="foot"><div class="sync ${sync[0]}"><span class="dot"></span>${sync[1]}</div>
       <a class="btn quiet sm" href="${custHref('#menu')}"${custAttrs}>${icon('utensils', 'sm')}Customer view</a>
-      <button class="btn quiet sm" data-a="lock">${icon('lock', 'sm')}Lock</button></div></nav>`;
+      <div class="whoami">${icon('user', 'sm')}<span><b>${esc(who())}</b><br>${esc(D.ROLES[(me() || {}).role] ? D.ROLES[me().role].label : '')}</span></div>
+      <button class="btn quiet sm" data-a="lock">${icon('lock', 'sm')}${supa() ? 'Sign out' : 'Lock or switch user'}</button></div></nav>`;
   }
   function render() {
     if (!root) return;
     clearInterval(ticker);
-    if (!unlocked) return lockScreen();
+    if (!me()) return lockScreen();
+    if (!allowed(page)) { page = D.ROLES[me().role].pages[0]; try { history.replaceState(null, '', href(page)); } catch (e) { /* ignore */ } }
     const y = window.scrollY;
     if (page === 'board') { root.innerHTML = board(); return; }
-    const body = { app: appControls, overview: overview, orders: orders, billing: billing, bills: bills, menu: menuPage, stock: stockPage, reports: reports, tables: tables, setup: setup }[page] || overview;
+    const body = { team: teamPage, app: appControls, overview: overview, orders: orders, billing: billing, bills: bills, menu: menuPage, stock: stockPage, reports: reports, tables: tables, setup: setup }[page] || overview;
     root.innerHTML = `<div class="staff">
       <div class="mtop"><button class="btn icon sm quiet" data-a="side" aria-label="Open navigation" style="background:rgba(255,255,255,.1);color:#fff">${icon('menu')}</button><span class="plate">${esc(S().settings.name)}</span></div>
       ${side()}<main class="main" id="smain">${S().ready ? body() : `<div class="empty">${icon('clock')}<h2>Loading café data</h2></div>`}</main></div>`;
@@ -211,7 +248,7 @@ const Staff = (() => {
       <ul>${(o.items || []).map((l) => `<li><b>${l.qty}×</b><span>${esc(l.name)}${(l.opts || []).length ? `<span class="n opts">${esc(l.opts.join(', '))}</span>` : ''}${l.note ? `<span class="n">${esc(l.note)}</span>` : ''}</span></li>`).join('')}</ul>
       <div class="ft">${payc}<span class="chip">${o.source === 'portal' ? 'Portal' : 'Counter'}</span>
         <button class="btn xs ghost" data-kot="${esc(o.id)}" aria-label="Kitchen ticket">${icon(UI.canPrint() ? 'print' : 'download', 'sm')}KOT</button>
-        <button class="btn xs danger ghost" data-cancel="${esc(o.id)}">Cancel</button>
+        ${canDo('cancel') ? `<button class="btn xs danger ghost" data-cancel="${esc(o.id)}">Cancel</button>` : ''}
         ${next ? `<button class="btn sm ${o.status === 'new' ? 'saffron' : ''}" data-next="${esc(o.id)}" data-to="${next[0]}">${next[1]}</button>` : ''}</div></article>`;
   }
   function orders() {
@@ -226,7 +263,7 @@ const Staff = (() => {
   }
   async function advance(id, to) {
     const o = S().orders.find((x) => x.id === id); if (!o) return;
-    try { await D.api.patchOrder(id, { status: to, log: [...(o.log || []), { s: to, at: Date.now() }] }); toast(`${id} ${to === 'preparing' ? 'started' : to === 'ready' ? 'is ready' : 'served'}`); }
+    try { await D.api.patchOrder(id, { status: to, log: [...(o.log || []), { s: to, at: Date.now(), by: who() }] }); toast(`${id} ${to === 'preparing' ? 'started' : to === 'ready' ? 'is ready' : 'served'}`); }
     catch (e) { /* handled globally */ }
   }
   async function cancelOrder(id) {
@@ -234,8 +271,11 @@ const Staff = (() => {
     const paid = o.pay && o.pay.status === 'paid';
     const ok = await confirmBox(`Cancel order ${id}? Its ingredients go back into stock.${paid ? ' It was already paid, so it will be marked for refund.' : ''}`, { title: 'Cancel this order?', ok: 'Cancel order', cancel: 'Keep order', danger: true });
     if (!ok) return;
-    await D.api.patchOrder(id, { status: 'cancelled', log: [...(o.log || []), { s: 'cancelled', at: Date.now() }], pay: Object.assign({}, o.pay, paid ? { status: 'refunded', refundAt: Date.now() } : {}) });
-    toast(`${id} cancelled`);
+    await guarded(paid ? 'cancelPaid' : 'cancel', `Cancelling ${paid ? 'a paid' : 'an'} order`, async (ap) => {
+      const by = who(), extra = ap ? { approvedBy: ap.name } : {};
+      await D.api.patchOrder(id, { status: 'cancelled', log: [...(o.log || []), Object.assign({ s: 'cancelled', at: Date.now(), by }, extra)], pay: Object.assign({}, o.pay, paid ? Object.assign({ status: 'refunded', refundAt: Date.now(), refundBy: by }, extra) : {}) });
+      toast(`${id} cancelled${ap && ap.id !== (me() || {}).id ? `, approved by ${ap.name}` : ''}`);
+    });
   }
   function kotText(o) {
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>KOT ${esc(o.id)}</title><style>body{font-family:ui-monospace,Menlo,monospace;font-size:14px;max-width:300px;margin:10px auto}h1{font-size:20px;margin:0}hr{border:0;border-top:1px dashed #000}li{margin:4px 0}small{display:block;color:#444}</style></head><body>
@@ -262,7 +302,7 @@ const Staff = (() => {
     const waiting = unpaidOrders(), tabs = openTabs();
     const multi = Object.entries(tabs).filter(([, l]) => l.length > 1);
     const inTab = new Set(multi.flatMap(([, l]) => l.map((o) => o.id)));
-    return head('Billing', 'Tap a dish to add it, or type and press Enter. Press / to search.', `<button class="btn ghost" data-a="zreport">${icon('cash')}Close the day</button>`) +
+    return head('Billing', 'Tap a dish to add it, or type and press Enter. Press / to search.', canDo('dayClose') ? `<button class="btn ghost" data-a="zreport">${icon('cash')}Close the day</button>` : '') +
       (waiting.length ? `<div class="box" style="margin-bottom:14px"><h2>${icon('receipt')}Waiting for payment <span class="faint">${waiting.length} bill${waiting.length > 1 ? 's' : ''}, ${D.money(sumBy(waiting, (o) => o.total))}</span></h2>
         <div class="row wrap">${multi.map(([t, l]) => `<button class="btn saffron sm" data-psettle="${t}">${icon('dine', 'sm')}Table ${t}: ${l.length} bills, ${D.money(sumBy(l, (o) => o.total))}. Settle</button>`).join('')}
         ${waiting.filter((o) => !inTab.has(o.id)).map((o) => `<button class="btn ${o.pay.status === 'pending' ? 'saffron' : 'ghost'} sm" data-collect="${esc(o.id)}">${esc(o.id)}, ${o.table ? 'T' + o.table : 'TA'}, ${D.money(o.total)}${o.pay.status === 'pending' ? ', UPI sent' : ''}</button>`).join('')}</div></div>` : '') +
@@ -303,7 +343,7 @@ const Staff = (() => {
       <div class="lines">${lines.length ? lines.map((l, i) => `<div class="tline"><div><div class="nm">${esc(l.name)}</div>${(l.opts || []).length ? `<div class="sm opts">${esc(l.opts.join(', '))}</div>` : ''}${l.note ? `<div class="sm" style="color:var(--warn)">${esc(l.note)}</div>` : ''}
         <div class="sm money">${D.rupees(l.price)} <button class="linkbtn" data-pedit="${i}">${D.optionGroups(X().menuById[l.id]).length ? 'Customise' : 'Note'}</button></div></div>
         <div class="mini-step"><button data-pdec="${i}" aria-label="One less">${icon('minus', 'sm')}</button><span>${l.qty}</span><button data-pinc="${i}" aria-label="One more">${icon('plus', 'sm')}</button></div><span class="amt">${D.money(Math.round(l.price * 100) * l.qty)}</span></div>`).join('') : '<p class="muted" style="margin:14px 0">Tap a dish to start a bill.</p>'}</div>
-      <div class="row" style="margin:12px 0 8px;align-items:flex-end"><label class="field grow"><span>Discount</span><input class="in" inputmode="decimal" placeholder="0" value="${esc(pos.disc)}" data-pdisc></label>
+      <div class="row" style="margin:12px 0 8px;align-items:flex-end"><label class="field grow"><span>Discount${canDo('discountAny') ? '' : ` <small class="faint">up to ${esc(S().settings.cashierMaxDisc ?? 10)}%</small>`}</span><input class="in" inputmode="decimal" placeholder="0" value="${esc(pos.disc)}" data-pdisc></label>
         <div class="seg" style="margin-bottom:3px"><button data-pdm="pct" aria-pressed="${pos.discMode === 'pct'}">%</button><button data-pdm="amt" aria-pressed="${pos.discMode === 'amt'}">₹</button></div>
         ${st.loyalty !== false ? `<label class="field" style="width:46%"><span>Rewards phone</span><input class="in" inputmode="tel" maxlength="14" placeholder="Optional" value="${esc(pos.phone)}" data-pphone></label>` : ''}</div>
       <div data-prw>${rewardsLine(rw, need)}</div>
@@ -382,7 +422,7 @@ const Staff = (() => {
       title: { cash: 'Cash payment', upi: 'UPI payment', card: 'Card payment', split: 'Split payment' }[method], body,
       actions: [{ label: 'Back' }, {
         label: method === 'cash' ? 'Complete sale' : 'Payment received', cls: 'saffron', onClick: (mm) => {
-          const pay = { method, status: 'paid', at: Date.now(), by: 'staff' };
+          const pay = { method, status: 'paid', at: Date.now(), by: who() };
           if (method === 'cash') { const recv = Math.round((parseFloat($('[data-recv]', mm.el).value) || 0) * 100); if (recv < amount) { toast('Cash received is less than the total', 'warn'); return false; } pay.received = recv; pay.change = recv - amount; }
           if (method === 'upi') pay.ref = ($('[data-uref]', mm.el).value || '').trim() || ref;
           if (method === 'card') { pay.last4 = ($('[data-l4]', mm.el).value || '').replace(/\D/g, '').slice(-4); pay.ref = 'POS'; }
@@ -423,7 +463,9 @@ const Staff = (() => {
       const now = Date.now(), ids = D.orderIds(no, S().settings.prefix || 'KM', now);
       const order = Object.assign({ id: ids.id, no, inv: ids.inv, createdAt: now, table: pos.type === 'dine-in' ? +pos.table : null, type: pos.type, source: 'pos', customer: null,
         items: lines.map((l) => ({ id: l.id, name: l.name, price: l.price, qty: l.qty, note: l.note || '', veg: l.veg, model: l.model, opts: l.opts || [] })), status: 'new', log: [{ s: 'new', at: now }],
-        use: D.consumption(lines, X().menuById), pay, note: '' }, b);
+        use: D.consumption(lines, X().menuById), pay, note: '', by: who() }, b);
+      if (pos.approvedBy) order.approvedBy = pos.approvedBy;
+      order.log[0].by = who();
       const ph = D.cleanPhone(pos.phone); if (ph && S().settings.loyalty !== false) { order.phone = ph; if (posRedeem()) order.beans = Number(S().settings.redeemBeans) || 100; }
       await D.api.putOrder(order);
       Object.assign(pos, { lines: [], disc: '', phone: '', redeem: false });
@@ -431,14 +473,20 @@ const Staff = (() => {
       return order;
     });
   }
-  function posReady() {
+  // a cashier may give up to settings.cashierMaxDisc % off; more needs an owner's PIN (recorded on the bill)
+  async function posReady() {
     if (!posLines().length) return false;
+    const sub = posLines().reduce((a, l) => a + Math.round(l.price * 100) * l.qty, 0), manual = posBill().disc - posRedeem();
+    const lim = Number(S().settings.cashierMaxDisc); pos.approvedBy = null;
+    if (manual > 0 && sub > 0 && !canDo('discountAny') && (manual / sub) * 100 > (isNaN(lim) ? 10 : lim) + 1e-9) {
+      const ap = await ownerApprove(`A discount over ${isNaN(lim) ? 10 : lim}%`); if (!ap) return false; pos.approvedBy = ap.name;
+    }
     if (pos.type === 'dine-in' && !pos.table) { toast('Choose the table first', 'warn'); const sel = $('[data-ptable]', root); if (sel) sel.focus(); return false; }
     if (pos.phone && !D.cleanPhone(pos.phone)) { toast('Check the rewards phone number, or clear it', 'warn'); return false; }
     return true;
   }
   async function posCharge(method) {
-    if (!posReady()) return;
+    if (!(await posReady())) return;
     const b = posBill(), tmpRef = (S().settings.prefix || 'KM') + 'P' + Date.now().toString(36).toUpperCase().slice(-5);
     payDialog(method, b.total, tmpRef, async (pay) => {
       try { const order = await newOrderFromTicket(pay); pos.table = ''; refreshTicket(); receiptDialog([order], pay.change); }
@@ -447,7 +495,7 @@ const Staff = (() => {
   }
   // dine-in: the kitchen gets the ticket now, the table pays at the end (Settle table)
   async function posSendKot() {
-    if (!posReady()) return;
+    if (!(await posReady())) return;
     try { const o = await newOrderFromTicket({ method: 'counter', status: 'unpaid' }); refreshTicket(); toast(`${o.id} sent to the kitchen for Table ${o.table}`); render(); }
     catch (e) { toast('Could not send the order. Try again.', 'bad'); }
   }
@@ -480,7 +528,7 @@ const Staff = (() => {
       return modal({ title: `Confirm UPI for ${o.id}`, body: `<p class="muted" style="margin-top:0">The customer says they paid <b class="money">${D.money(o.total)}</b> by UPI${o.pay.ref ? ` with reference <b>${esc(o.pay.ref)}</b>` : ''}. Check your UPI app or soundbox before confirming.</p>`,
         actions: [{ label: 'Not received', cls: 'ghost', onClick: async () => { await D.api.patchOrder(o.id, { pay: Object.assign({}, o.pay, { status: 'unpaid', claimed: false }) }); toast('Marked as not paid'); } },
           { label: 'Collect another way', cls: 'ghost', onClick: () => { setTimeout(() => chooseCollect(o), 50); } },
-          { label: 'Payment received', cls: 'saffron', onClick: async () => { await D.api.patchOrder(o.id, { pay: Object.assign({}, o.pay, { status: 'paid', at: Date.now(), by: 'staff' }) }); toast(`${o.id} paid`); } }] });
+          { label: 'Payment received', cls: 'saffron', onClick: async () => { await D.api.patchOrder(o.id, { pay: Object.assign({}, o.pay, { status: 'paid', at: Date.now(), by: who() }) }); toast(`${o.id} paid`); } }] });
     }
     chooseCollect(o);
   }
@@ -557,7 +605,7 @@ const Staff = (() => {
       actions: [{ label: 'Cancel' }, { label: 'Download report', cls: 'ghost', icon: 'download', close: false, onClick: (mm) => UI.download(`day-close-${D.dayKey(sod)}.html`, zHtml(read(mm)), 'text/html') },
         { label: 'Save and close the day', cls: 'saffron', onClick: async (mm) => {
           const z = read(mm); if (z.counted == null) { toast('Enter the cash counted', 'warn'); $('[data-zc]', mm.el).focus(); return false; }
-          try { await D.api.addLedger({ id: D.rid('z_'), at: Date.now(), type: 'close', ing: '', qty: 0, note: z.note, close: z }); toast(z.diff ? `Day closed, cash ${z.diff > 0 ? 'over' : 'short'} by ${D.money(Math.abs(z.diff), true)}` : 'Day closed, cash matches'); } catch (e) { return false; }
+          try { await D.api.addLedger({ id: D.rid('z_'), at: Date.now(), type: 'close', ing: '', qty: 0, note: z.note, close: Object.assign(z, { by: who() }) }); toast(z.diff ? `Day closed, cash ${z.diff > 0 ? 'over' : 'short'} by ${D.money(Math.abs(z.diff), true)}` : 'Day closed, cash matches'); } catch (e) { return false; }
         } }],
     });
     const style = document.createElement('style'); style.textContent = '@media (max-width:760px){[data-zgrid]{grid-template-columns:1fr!important}}'; m.el.appendChild(style);
@@ -610,9 +658,9 @@ const Staff = (() => {
     const o = S().orders.find((x) => x.id === id); if (!o) return;
     const p = o.pay || {}, canCollect = o.status !== 'cancelled' && p.status !== 'paid' && p.status !== 'refunded';
     const acts = [];
-    if (canCollect) acts.push({ label: p.status === 'pending' ? 'Confirm UPI' : 'Collect payment', cls: 'saffron', onClick: () => { setTimeout(() => collect(o.id), 30); } });
-    if (o.status !== 'cancelled') acts.push({ label: 'Cancel order', cls: 'danger ghost', onClick: () => { setTimeout(() => cancelOrder(o.id), 30); } });
-    if (p.status === 'paid' && o.status !== 'cancelled') acts.push({ label: 'Refund', cls: 'ghost', onClick: async () => { const ok = await confirmBox(`Refund ${D.money(o.total)} for ${o.id}? Return the money the same way it was paid.`, { title: 'Refund this bill?', ok: 'Mark refunded', danger: true }); if (ok) { await D.api.patchOrder(o.id, { pay: Object.assign({}, p, { status: 'refunded', refundAt: Date.now() }) }); toast(`${o.id} refunded`); } } });
+    if (canCollect && canDo('collect')) acts.push({ label: p.status === 'pending' ? 'Confirm UPI' : 'Collect payment', cls: 'saffron', onClick: () => { setTimeout(() => collect(o.id), 30); } });
+    if (o.status !== 'cancelled' && canDo('cancel')) acts.push({ label: 'Cancel order', cls: 'danger ghost', onClick: () => { setTimeout(() => cancelOrder(o.id), 30); } });
+    if (p.status === 'paid' && o.status !== 'cancelled' && canDo('collect')) acts.push({ label: canDo('refund') ? 'Refund' : 'Refund (owner)', cls: 'ghost', onClick: async () => { const ok = await confirmBox(`Refund ${D.money(o.total)} for ${o.id}? Return the money the same way it was paid.`, { title: 'Refund this bill?', ok: 'Mark refunded', danger: true }); if (ok) await guarded('refund', 'A refund', async (ap) => { await D.api.patchOrder(o.id, { pay: Object.assign({}, p, { status: 'refunded', refundAt: Date.now(), refundBy: who() }, ap ? { approvedBy: ap.name } : {}) }); toast(`${o.id} refunded`); }); } });
     acts.push({ label: 'Download', icon: 'download', cls: 'ghost', close: false, onClick: () => { UI.download(`${o.id}-bill.html`, Invoice.html(o, S().settings), 'text/html'); } });
     if (UI.canPrint()) acts.push({ label: 'Print', icon: 'print', cls: 'ghost', close: false, onClick: () => printHtml(null, Invoice.lines(o, S().settings)) });
     const m = modal({ title: `Bill ${o.id}`, body: `<div class="row wrap" style="margin-bottom:12px">${stChip(o)}${payCell(o)}<span class="chip">${o.source === 'portal' ? 'Customer portal' : 'Counter'}</span>${(o.log || []).map((l) => `<span class="faint" style="font-size:12.5px">${l.s} ${D.time12(l.at)}</span>`).join('')}${(o.sent || []).length ? `<span class="chip ok">Sent by ${esc([...new Set(o.sent.map((x) => (x.via === 'whatsapp' ? 'WhatsApp' : 'email')))].join(' and '))}</span>` : ''}</div>${sendBox(o.phone || '')}${Invoice.lines(o, S().settings)}`, actions: acts });
@@ -631,7 +679,7 @@ const Staff = (() => {
     const cats = ['All', ...new Set(S().menu.map((d) => d.category))];
     const ql = mf.q.trim().toLowerCase();
     const list = S().menu.filter((d) => (mf.cat === 'All' || d.category === mf.cat) && (!ql || d.name.toLowerCase().includes(ql)));
-    return head('Menu', 'Dishes, prices, 3D models and recipes. Recipes drive stock and sold-out status automatically.', `<button class="btn" data-a="dnew">${icon('plus')}Add dish</button>`) + modeBanner() +
+    return head('Menu', 'Dishes, prices, 3D models and recipes. Recipes drive stock and sold-out status automatically.', canDo('dishEdit') ? `<button class="btn" data-a="dnew">${icon('plus')}Add dish</button>` : '') + modeBanner() +
       `<div class="toolbar"><label class="search">${icon('search')}<input type="search" placeholder="Search menu" value="${esc(mf.q)}" data-mq aria-label="Search menu"></label>
         <div class="pills">${cats.map((c) => `<button class="pill" data-mc="${esc(c)}" aria-pressed="${mf.cat === c}">${esc(c)}</button>`).join('')}</div></div>
       <div class="tblwrap"><table class="tbl"><thead><tr><th></th><th>Dish</th><th>Category</th><th class="r">Price</th><th class="r">Food cost</th><th class="r">Margin</th><th>Available now</th><th>On menu</th><th></th></tr></thead><tbody>
@@ -640,8 +688,8 @@ const Staff = (() => {
         const av = s.ok ? `<span class="chip ok">${s.portions != null ? `${s.portions} left` : 'Yes'}</span>` : `<span class="chip ${s.reason === 'time' ? 'warn' : 'bad'}">${esc(s.short || s.label)}</span>`;
         return `<tr><td style="width:56px">${Viewer.img(d.model, '').replace('<img', '<img style="width:48px;height:48px;object-fit:contain"')}</td><td><div class="row" style="gap:7px">${vmark(d.veg)}<b>${esc(d.name)}</b></div>${d.from ? `<span class="faint" style="font-size:12.5px">${D.hm(d.from)} to ${D.hm(d.to)}</span>` : ''}</td>
           <td>${esc(d.category)}</td><td class="r money">${D.rupees(d.price)}</td><td class="r money">${D.money(fc, true)}</td><td class="r ${mg < 60 ? '' : ''}">${mg}%</td><td>${av}</td>
-          <td><label class="switch"><input type="checkbox" ${d.active !== false ? 'checked' : ''} data-dact="${d.id}" aria-label="Show ${esc(d.name)} on the menu"></label></td>
-          <td><button class="btn xs ghost" data-dedit="${d.id}">${icon('edit', 'sm')}Edit</button></td></tr>`;
+          <td><label class="switch"><input type="checkbox" ${d.active !== false ? 'checked' : ''} data-dact="${d.id}" ${canDo('dishToggle') ? '' : 'disabled'} aria-label="Show ${esc(d.name)} on the menu"></label></td>
+          <td>${canDo('dishEdit') ? `<button class="btn xs ghost" data-dedit="${d.id}">${icon('edit', 'sm')}Edit</button>` : ''}</td></tr>`;
       }).join('') || `<tr><td colspan="9"><div class="empty" style="padding:24px">No dishes yet. Add your first dish.</div></td></tr>`}</tbody></table></div>`;
   }
   const slug = (s) => String(s).toLowerCase().normalize('NFKD').replace(/[^\w\s-]/g, '').trim().replace(/[\s_]+/g, '-').replace(/-+/g, '-').slice(0, 40) || 'dish';
@@ -710,6 +758,55 @@ const Staff = (() => {
       if (!d.id) { let base = slug(name), idn = base, k = 2; while (X().menuById[idn]) idn = base + '-' + k++; d.id = idn; }
       try { await D.api.putDish(d); toast(`${name} saved`); } catch (e) { return false; }
     }
+  }
+
+  /* ---------------- team: people, roles and PINs (owner only) ---------------- */
+  const PERM_ROWS = [['Take orders, kitchen board, pickup screen', ['owner', 'cashier', 'staff']], ['Mark dishes sold out, record wastage', ['owner', 'cashier', 'staff']],
+    ['Billing, collect payments, cancel unpaid orders', ['owner', 'cashier']], ['Close the day (cash drawer)', ['owner', 'cashier']],
+    ['Discounts above the cashier limit', ['owner']], ['Refunds and cancelling paid bills', ['owner']], ['Edit dishes, prices and recipes', ['owner']],
+    ['Purchases, stock counts, ingredients', ['owner']], ['Reports and GST', ['owner']], ['Customer app, team and setup', ['owner']]];
+  function teamPage() {
+    const t = D.team(S().settings), s = S().settings, legacy = t.length === 1 && t[0].legacy;
+    const today = D.startOfDay(), mine = (m) => S().orders.filter((o) => o.createdAt >= today && o.by === m.name).length;
+    return head('Team', 'Everyone signs in with their own 4-digit PIN. What they can see and do depends on their role.', `<button class="btn" data-a="tadd">${icon('plus')}Add person</button>`) +
+      (!legacy && t.some((m) => m.active !== false && m.pinHash === D.pinHash('1234', s.pinSalt)) ? `<div class="banner">${icon('alert')}<span>${esc(t.find((m) => m.pinHash === D.pinHash('1234', s.pinSalt)).name)} still uses the starting PIN 1234, which anyone could guess. Change it or remove that person.</span></div>` : '') +
+      (legacy ? `<div class="banner">${icon('alert')}<span>Only the starting owner exists, with PIN ${String(s.pin || '1234') === '1234' ? '1234' : 'from Setup'}. Add yourself and your staff, then remove or change the starting owner.</span></div>` : '') +
+      (supa() ? `<div class="banner info">${icon('info')}<span>With Supabase, staff sign in with their email accounts and the role comes from the staff table. These PINs are used for owner approvals.</span></div>` : '') +
+      `<div class="dash"><div class="tblwrap"><table class="tbl"><thead><tr><th>Name</th><th>Role</th><th>Status</th><th class="r">Bills today</th><th></th></tr></thead><tbody>
+        ${t.map((m) => `<tr><td><b>${esc(m.name)}</b>${m.id === (me() || {}).id ? ' <span class="chip info">You</span>' : ''}</td><td>${esc(D.ROLES[m.role] ? D.ROLES[m.role].label : m.role)}</td><td>${m.active === false ? '<span class="chip">Off</span>' : '<span class="chip ok">Active</span>'}</td><td class="r num">${mine(m)}</td>
+          <td class="r"><button class="btn xs ghost" data-tedit="${esc(m.id)}">${icon('edit', 'sm')}Edit</button></td></tr>`).join('')}</tbody></table></div>
+        <div class="col"><div class="box"><h2>Cashier discount limit</h2><label class="field"><span>Cashiers can give up to this % off without an owner’s PIN</span><input class="in" inputmode="numeric" data-tlim value="${esc(s.cashierMaxDisc ?? 10)}" style="max-width:120px"></label></div>
+        <div class="box"><h2>What each role can do</h2><table class="tbl perm"><thead><tr><th></th><th>Owner</th><th>Cashier</th><th>Staff</th></tr></thead><tbody>
+          ${PERM_ROWS.map(([l, r]) => `<tr><td>${l}</td>${['owner', 'cashier', 'staff'].map((k) => `<td>${r.includes(k) ? icon('check', 'sm') : '<span class="faint">–</span>'}</td>`).join('')}</tr>`).join('')}</tbody></table>
+          <small class="faint">Anything a role can’t do can still be done once if an owner enters their PIN; the bill records who approved it.</small></div></div></div>`;
+  }
+  function memberEditor(id) {
+    if (!canDo('settings')) return;
+    const s = S().settings, t = D.team(s), orig = id ? t.find((m) => m.id === id) : null;
+    const m = modal({ title: orig ? `Edit ${orig.name}` : 'Add a person', body: `<form style="display:grid;gap:12px" data-tform novalidate>
+        <label class="field"><span>Name</span><input class="in" name="name" maxlength="30" value="${esc(orig ? orig.name : '')}" autofocus></label>
+        <label class="field"><span>Role</span><select class="in" name="role">${Object.entries(D.ROLES).map(([k, r]) => `<option value="${k}" ${(orig ? orig.role : 'cashier') === k ? 'selected' : ''}>${r.label}</option>`).join('')}</select></label>
+        <div class="grid2"><label class="field"><span>${orig ? 'New PIN (leave empty to keep)' : 'PIN, 4 digits'}</span><input class="in" name="pin" type="password" inputmode="numeric" maxlength="4" autocomplete="new-password"></label>
+        <label class="field"><span>Type the PIN again</span><input class="in" name="pin2" type="password" inputmode="numeric" maxlength="4" autocomplete="new-password"></label></div>
+        ${orig ? `<label class="row" style="justify-content:space-between"><span>Can sign in</span><span class="switch"><input type="checkbox" name="active" ${orig.active !== false ? 'checked' : ''}></span></label>` : ''}</form>`,
+      actions: [...(orig ? [{ label: 'Remove', cls: 'danger ghost', onClick: async () => { if (await confirmBox(`Remove ${orig.name}? Their past bills keep their name.`, { title: 'Remove this person?', ok: 'Remove', danger: true })) return saveTeam(t.filter((x) => x.id !== orig.id), `${orig.name} removed`); } }] : []),
+        { label: 'Cancel' }, { label: orig ? 'Save' : 'Add person', cls: 'saffron', onClick: (mm) => {
+          const f = $('[data-tform]', mm.el).elements, name = f.name.value.trim(), role = f.role.value, pin = f.pin.value.trim(), pin2 = f.pin2.value.trim();
+          if (!name) { toast('Enter a name', 'warn'); return false; }
+          if ((pin || !orig) && !/^\d{4}$/.test(pin)) { toast('The PIN needs 4 digits', 'warn'); return false; }
+          if (pin !== pin2) { toast('The two PINs don’t match', 'warn'); return false; }
+          const h = pin ? D.pinHash(pin, s.pinSalt) : orig.pinHash;
+          if (pin && t.some((x) => x.id !== (orig && orig.id) && x.pinHash === h)) { toast('Someone else already uses that PIN. Choose another.', 'warn'); return false; }
+          const rec = Object.assign({}, orig || { id: D.rid('u_') }, { name, role, pinHash: h, active: orig ? f.active.checked : true }); delete rec.legacy;
+          const next = orig ? t.map((x) => (x.id === orig.id ? rec : x)) : t.map((x) => Object.assign({}, x)).concat(rec);
+          next.forEach((x) => delete x.legacy);
+          saveTeam(next, orig ? `${name} saved` : `${name} added as ${D.ROLES[role].label.toLowerCase()}`);
+        } }] });
+    return m;
+  }
+  async function saveTeam(list, msg) {
+    if (!list.some((x) => x.role === 'owner' && x.active !== false)) { toast('Keep at least one active owner', 'warn'); return false; }
+    try { await D.api.setSettings({ staff: list, pin: null }); toast(msg); if (meId && !list.some((x) => x.id === meId && x.active !== false)) { meId = null; try { sessionStorage.removeItem('km.staff'); } catch (e) { /* ignore */ } } render(); } catch (e) { return false; }
   }
 
   /* ---------------- customer app controls: every switch saves at once and reaches guests' phones live ---------------- */
@@ -783,7 +880,7 @@ const Staff = (() => {
           <td><span class="num">${fmtQty(Math.max(0, s.qty), s.unit)}</span><div class="stockbar ${s.state}"><i style="width:${pct}%"></i></div></td><td class="r num">${fmtQty(s.reorder, s.unit)}</td>
           <td>${s.state === 'out' ? '<span class="chip bad">Out</span>' : s.state === 'low' ? '<span class="chip warn">Low</span>' : '<span class="chip ok">OK</span>'}</td>
           <td class="r money">${D.money(Math.round(Math.max(0, s.qty) * (Number(s.cost) || 0) * 100))}</td><td style="max-width:220px;font-size:13px" class="muted">${esc((usedIn[s.id] || []).join(', ') || 'Not in any recipe')}</td>
-          <td><div class="row" style="gap:6px;justify-content:flex-end"><button class="btn xs" data-sbuy="${s.id}">${icon('plus', 'sm')}Purchase</button><button class="btn xs ghost" data-swaste="${s.id}">Wastage</button><button class="btn xs ghost" data-scount="${s.id}">Count</button><button class="btn xs ghost icon" data-sedit="${s.id}" aria-label="Edit ${esc(s.name)}">${icon('edit', 'sm')}</button></div></td></tr>`;
+          <td><div class="row" style="gap:6px;justify-content:flex-end">${canDo('stockBuy') ? `<button class="btn xs" data-sbuy="${s.id}">${icon('plus', 'sm')}Purchase</button>` : ''}${canDo('stockWaste') ? `<button class="btn xs ghost" data-swaste="${s.id}">Wastage</button>` : ''}${canDo('stockCount') ? `<button class="btn xs ghost" data-scount="${s.id}">Count</button>` : ''}${canDo('stockEdit') ? `<button class="btn xs ghost icon" data-sedit="${s.id}" aria-label="Edit ${esc(s.name)}">${icon('edit', 'sm')}</button>` : ''}</div></td></tr>`;
       }).join('')}</tbody></table></div>`;
     } else if (sf.tab === 'buy') {
       const list = items.filter((s) => s.state !== 'ok').map((s) => { const sug = Math.max(s.reorder * 2 - Math.max(0, s.qty), s.reorder); const r = s.unit === 'g' || s.unit === 'ml' ? Math.ceil(sug / 500) * 500 : Math.ceil(sug); return Object.assign({}, s, { sug: r, est: Math.round(r * (Number(s.cost) || 0) * 100) }); });
@@ -800,7 +897,7 @@ const Staff = (() => {
         ${S().ledger.filter((e) => e.type !== 'close').slice(0, 80).map((e) => { const s = X().stockById[e.ing]; return `<tr><td>${D.dateShort(e.at)}, ${D.time12(e.at)}</td><td>${esc(s ? s.name : e.ing)}</td><td>${{ purchase: '<span class="chip ok">Purchase</span>', waste: '<span class="chip bad">Wastage</span>', count: '<span class="chip info">Count</span>' }[e.type] || esc(e.type)}</td><td class="r num">${e.qty > 0 ? '+' : ''}${s ? fmtQty(e.qty, s.unit) : e.qty}</td><td class="muted">${esc(e.note || '')}</td></tr>`; }).join('')}</tbody></table></div>` : '<p class="muted" style="margin:0">No purchases, wastage or counts recorded yet.</p>'}</div>
         <div class="box"><h2>Used today <span class="faint">From today’s orders</span></h2>${usedRows.length ? hbars(usedRows.slice(0, 12).map((r) => ({ l: r.s.name, v: r.v * (r.s.cost || 0), q: r.v, u: r.s.unit })), (r) => fmtQty(r.q, r.u)) : '<p class="muted" style="margin:0">Nothing used yet today.</p>'}</div></div>`;
     }
-    return head('Stock', 'Every order deducts its recipe from stock. Dishes sell out on their own when an ingredient runs out.', `<button class="btn" data-a="snew">${icon('plus')}Add ingredient</button>`) +
+    return head('Stock', 'Every order deducts its recipe from stock. Dishes sell out on their own when an ingredient runs out.', canDo('stockEdit') ? `<button class="btn" data-a="snew">${icon('plus')}Add ingredient</button>` : '') +
       `<div class="kpis"><div class="kpi"><div class="l">Ingredients</div><div class="v num">${items.length}</div></div><div class="kpi"><div class="l">Low</div><div class="v num" style="color:${low ? 'var(--warn)' : ''}">${low}</div></div>
        <div class="kpi"><div class="l">Out</div><div class="v num" style="color:${out ? 'var(--danger)' : ''}">${out}</div></div><div class="kpi"><div class="l">Stock value</div><div class="v money">${D.money(Math.round(value / 100) * 100)}</div></div></div>
       <div style="margin-bottom:12px">${tabs}</div>${body}`;
@@ -948,7 +1045,7 @@ const Staff = (() => {
         <div class="box"><h2>Orders</h2><div class="grid2">${f('prefix', 'Order ID prefix', 'maxlength="4" style="text-transform:uppercase"')}${f('tables', 'Tables', 'inputmode="numeric"')}</div>
           <label class="row" style="justify-content:space-between"><span>Serve dishes only in their set hours</span><span class="switch"><input type="checkbox" name="timeMenus" ${s.timeMenus !== false ? 'checked' : ''}></span></label>
           <small class="faint">Rewards, payment methods and other customer app options are on the <a href="${href('app')}">Customer app</a> page.</small>
-          <label class="field"><span>Staff PIN</span><input class="in" name="pin" inputmode="numeric" maxlength="4" value="${esc(s.pin || '1234')}"></label></div>
+          <small class="faint">Staff PINs and roles are on the <a href="${href('team')}">Team</a> page.</small></div>
         <div class="box"><h2>Data</h2><p class="muted" style="margin:0">${supa() ? 'Orders, menu and stock live in your Supabase project and sync to every phone and counter in real time.' : S().mode === 'cloud' ? 'Orders, menu and stock are shared live between every device that opens this page while signed in to Claude.' : 'Data is saved in this browser. To share orders between phones and the counter, connect a shared database or open this page inside Claude.'}</p>
           <div class="row wrap"><button type="button" class="btn ghost sm" data-a="sample">${icon('chart', 'sm')}Add sample sales</button>${demo ? `<button type="button" class="btn ghost sm" data-a="unsample">${icon('trash', 'sm')}Remove ${demo} sample sales</button>` : ''}
           <button type="button" class="btn ghost sm" data-a="seed">${icon('refresh', 'sm')}${S().menu.length ? 'Reset menu and stock' : 'Load starter menu'}</button><button type="button" class="btn ghost sm" data-a="export">${icon('download', 'sm')}Export all data</button></div></div>
@@ -957,9 +1054,8 @@ const Staff = (() => {
   async function saveSetup() {
     const fm = $('[data-sform]', root); if (!fm) return;
     const v = (n) => (fm.elements[n].type === 'checkbox' ? fm.elements[n].checked : fm.elements[n].value.trim());
-    const patch = { name: v('name'), tagline: v('tagline'), address: v('address'), phone: v('phone'), gstin: v('gstin').toUpperCase(), fssai: v('fssai'), gstRate: +v('gstRate'), sac: v('sac'), taxInclusive: v('taxInclusive'), upiId: v('upiId'), upiName: v('upiName'), prefix: v('prefix').toUpperCase().replace(/[^A-Z]/g, '') || 'KM', tables: Math.max(1, Math.min(99, parseInt(v('tables'), 10) || 12)), timeMenus: v('timeMenus'), pin: v('pin') };
+    const patch = { name: v('name'), tagline: v('tagline'), address: v('address'), phone: v('phone'), gstin: v('gstin').toUpperCase(), fssai: v('fssai'), gstRate: +v('gstRate'), sac: v('sac'), taxInclusive: v('taxInclusive'), upiId: v('upiId'), upiName: v('upiName'), prefix: v('prefix').toUpperCase().replace(/[^A-Z]/g, '') || 'KM', tables: Math.max(1, Math.min(99, parseInt(v('tables'), 10) || 12)), timeMenus: v('timeMenus') };
     if (!patch.name) return toast('Enter the café name', 'warn');
-    if (!/^\d{4}$/.test(patch.pin)) return toast('The staff PIN needs 4 digits', 'warn');
     if (patch.upiId && !/^[\w.-]{2,}@[a-zA-Z]{2,}$/.test(patch.upiId)) return toast('That UPI ID doesn’t look right, for example yourcafe@okaxis', 'warn');
     if (patch.gstin && !/^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test(patch.gstin)) return toast('A GSTIN has 15 characters, for example 29ABCDE1234F1Z5', 'warn');
     if (patch.fssai && !/^\d{14}$/.test(patch.fssai)) return toast('The FSSAI number has 14 digits', 'warn');
@@ -967,12 +1063,15 @@ const Staff = (() => {
   }
 
   /* ---------------- actions ---------------- */
+  const OWNER_ACTS = { ssave: 'settings', sample: 'settings', unsample: 'settings', seed: 'settings', export: 'export', noticesave: 'settings', noticeclear: 'settings', tsave: 'settings', dnew: 'dishEdit', snew: 'stockEdit', zreport: 'dayClose', tadd: 'settings' };
   async function act(a, el) {
-    if (a === 'lock') { if (supa()) D.api.adapter.signOut().catch(() => {}); unlocked = false; try { sessionStorage.removeItem('km.staff'); } catch (e) { /* ignore */ } render(); }
+    if (OWNER_ACTS[a] && !canDo(OWNER_ACTS[a])) return toast('Your role can’t do that. Ask an owner.', 'warn');
+    if (a === 'lock') { if (supa()) D.api.adapter.signOut().catch(() => {}); meId = null; try { sessionStorage.removeItem('km.staff'); } catch (e) { /* ignore */ } render(); }
     if (a === 'side') { sideOpen = !sideOpen; $('.side', root).classList.toggle('open', sideOpen); }
     if (a === 'sound') { soundOn = !soundOn; if (soundOn) { UI.unlockAudio(); UI.chime(); } render(); }
     if (a === 'pclear') { Object.assign(pos, { lines: [], disc: '', phone: '', redeem: false }); refreshTicket(); }
     if (a === 'pkot') posSendKot();
+    if (a === 'tadd') memberEditor(null);
     if (a === 'noticesave') { const v = ($('[data-notice]', root).value || '').trim(); await D.api.setSettings({ notice: v }); toast(v ? 'Message is live on the menu' : 'Message removed'); }
     if (a === 'noticeclear') { await D.api.setSettings({ notice: '' }); toast('Message removed'); }
     if (a === 'zreport') dayClose();
@@ -1010,7 +1109,7 @@ const Staff = (() => {
   }
   function onClick(e) {
     const t = e.target;
-    if (!unlocked) { const p = t.closest('[data-pin]'); if (p) pinPress(p.dataset.pin); return; }
+    if (!me()) { const p = t.closest('[data-pin]'); if (p) pinPress(p.dataset.pin); return; }
     const g = (sel) => t.closest(sel);
     let el;
     if ((el = g('[data-a]'))) return act(el.dataset.a, el);
@@ -1032,12 +1131,13 @@ const Staff = (() => {
     if ((el = g('[data-br]'))) { bf.range = el.dataset.br; return render(); }
     if ((el = g('[data-bs]'))) { bf.status = el.dataset.bs; return render(); }
     if ((el = g('[data-mc]'))) { mf.cat = el.dataset.mc; return render(); }
-    if ((el = g('[data-dedit]'))) return dishEditor(el.dataset.dedit);
+    if ((el = g('[data-dedit]'))) return canDo('dishEdit') ? dishEditor(el.dataset.dedit) : null;
+    if ((el = g('[data-tedit]'))) return memberEditor(el.dataset.tedit);
     if ((el = g('[data-st]'))) { sf.tab = el.dataset.st; return render(); }
-    if ((el = g('[data-sbuy]'))) return stockDialog('buy', el.dataset.sbuy, +el.dataset.sugg || 0);
-    if ((el = g('[data-swaste]'))) return stockDialog('waste', el.dataset.swaste);
-    if ((el = g('[data-scount]'))) return stockDialog('count', el.dataset.scount);
-    if ((el = g('[data-sedit]'))) return ingredientEditor(el.dataset.sedit);
+    if ((el = g('[data-sbuy]'))) return canDo('stockBuy') ? stockDialog('buy', el.dataset.sbuy, +el.dataset.sugg || 0) : toast('Only an owner records purchases', 'warn');
+    if ((el = g('[data-swaste]'))) return canDo('stockWaste') ? stockDialog('waste', el.dataset.swaste) : null;
+    if ((el = g('[data-scount]'))) return canDo('stockCount') ? stockDialog('count', el.dataset.scount) : toast('Only an owner records stock counts', 'warn');
+    if ((el = g('[data-sedit]'))) return canDo('stockEdit') ? ingredientEditor(el.dataset.sedit) : null;
     if ((el = g('[data-rr]'))) { rf.range = el.dataset.rr; return render(); }
     if (sideOpen && g('.side a')) { sideOpen = false; }
   }
@@ -1053,10 +1153,13 @@ const Staff = (() => {
   }
   function onChange(e) {
     if (e.target.matches && e.target.matches('[data-predeem]')) { pos.redeem = e.target.checked; refreshTotals(); return; }
+    if (e.target.matches && e.target.matches('[data-ctl],[data-num],[data-tlim]') && !canDo('settings')) { toast('Only an owner can change this', 'warn'); render(); return; }
+    if (e.target.matches && e.target.matches('[data-tlim]')) { const v = Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 0)); D.api.setSettings({ cashierMaxDisc: v }).then(() => toast(`Cashiers can give up to ${v}% off`)); return; }
     if (e.target.matches && e.target.matches('[data-ctl]')) return setCtl(e.target.dataset.ctl, e.target.checked);
     if (e.target.matches && e.target.matches('[data-num]')) { const v = Math.max(1, parseInt(e.target.value, 10) || 0); if (!v) return; return setCtl(e.target.dataset.num, v); }
     const t = e.target;
     if (t.matches('[data-ptable]')) pos.table = t.value;
+    if (t.matches('[data-dact]') && !canDo('dishToggle')) return;
     if (t.matches('[data-dact]')) { const d = X().menuById[t.dataset.dact]; if (d) D.api.putDish(Object.assign({}, d, { active: t.checked })).then(() => toast(`${d.name} ${t.checked ? 'is on the menu' : 'is hidden from the menu'}`)); }
   }
   function onKey(e) {
@@ -1077,7 +1180,7 @@ const Staff = (() => {
     for (const o of list) {
       if (seen.has(o.id)) continue;
       seen.add(o.id);
-      if (o.status === 'new' && Date.now() - o.createdAt < 5 * 60000 && unlocked && page !== 'board' && document.body.classList.contains('s-mode') && o.source === 'portal') {
+      if (o.status === 'new' && Date.now() - o.createdAt < 5 * 60000 && me() && page !== 'board' && document.body.classList.contains('s-mode') && o.source === 'portal') {
         toast(`New order ${o.id}, ${o.table ? 'Table ' + o.table : 'Takeaway'}, ${D.money(o.total)}`, 'ok', 5000);
         if (soundOn) UI.chime();
       }

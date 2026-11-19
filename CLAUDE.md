@@ -2,7 +2,7 @@
 
 Two apps for an Indian café, built from one source into separate pages that share storage: `dist/index.html` (customers), `dist/cafe.html` (staff) and `dist/demo.html` (both, used by the e2e tests). `window.KM_APP` ('customer', 'cafe', 'both') picks the routes in `app.js`.
 - **Customer portal** (phones): menu, 3D dishes, a camera "table view" where guests swipe through dishes placed on their table, cart with GST bill, UPI / card / pay-at-counter, and bills with order IDs.
-- **Café manager** (staff, PIN 1234 by default): overview dashboard, kitchen order tickets (KOT), billing (POS), bills, menu editor, recipe-based stock, GST reports, table QR codes, setup.
+- **Café manager** (roles owner, cashier, staff; each person has a PIN, the starting owner PIN is 1234): overview dashboard, kitchen order tickets (KOT), billing (POS), bills, menu editor, recipe-based stock, GST reports, table QR codes, setup.
 
 Plain JavaScript (ES2020), no framework and no runtime dependencies. The build inlines everything into one self-contained `dist/index.html`.
 
@@ -31,7 +31,7 @@ Plain JavaScript (ES2020), no framework and no runtime dependencies. The build i
 | `app.js` | | Boot and hash router |
 | `styles.css`, `template.html` | | Styles and page shell |
 
-Routes (hash): customer `#table-N`, `#menu`, `#ar`, `#cart`, `#bills`; café dashboard `#overview`, `#orders`, `#billing`, `#bills`, `#menu`, `#stock`, `#reports`, `#board` (pickup TV), `#app` (customer app switches), `#tables`, `#setup` (in demo.html they are prefixed `#staff-`, plus `#welcome`).
+Routes (hash): customer `#table-N`, `#menu`, `#ar`, `#cart`, `#bills`; café dashboard `#overview`, `#orders`, `#billing`, `#bills`, `#menu`, `#stock`, `#reports`, `#board` (pickup TV), `#app` (customer app switches), `#team` (people, roles, PINs), `#tables`, `#setup` (in demo.html they are prefixed `#staff-`, plus `#welcome`).
 
 ## Data model
 
@@ -50,6 +50,7 @@ Document paths: `cafe/settings`, `menu/{id}`, `stock/{id}`, `orders/{id}`, `ledg
 - **No automatic service charge.** It must stay voluntary, so the software never adds one.
 - **Invoice numbers** are consecutive per financial year (April to March): `PREFIX/YY-YY/NNNN`.
 - **Stock is derived, not decremented**: stock = `base` (at `baseAt`) + ledger entries after `baseAt` − `use` of non-cancelled orders created at or after `baseAt`. A stock count resets `base` and `baseAt`. This avoids lost updates when several devices order at once.
+- **Roles** (`Data.ROLES`: pages and permissions per role) gate the sidebar, pages and actions in `staff.js` through `canDo(perm)` and `allowed(page)`. Team members live in `settings.staff` `[{id, name, role, pinHash, active}]` (SHA-256 of `salt:pin`; with no team yet, `Data.team()` returns one owner using the old `settings.pin`). Restricted actions go through `guarded(perm, what, fn)`, which asks for an owner PIN. Orders record `by` and `approvedBy`; `settings.cashierMaxDisc` is the cashier's discount limit in %.
 - **Customer app switches** live in settings (`orderingOpen, dineIn, takeaway, pickupAhead, payUpi, payCard, payCounter, customise, pairings, arView, loyalty, notice`), edited on `#app`; `customer.js` reads them through `on(k)` and redraws when settings change.
 - **Rewards are derived too** (`Data.beans`): 1 bean per `beanPer` ₹ of paid, non-cancelled bills, minus `beans` redeemed. Redemption is a discount (`disc`) before GST.
 - **Availability** (`Data.dishStatus`): on the menu, inside serving hours (when `settings.timeMenus` is on), and enough stock for one more portion after what is already in the cart.
@@ -73,7 +74,7 @@ Document paths: `cafe/settings`, `menu/{id}`, `stock/{id}`, `orders/{id}`, `ledg
 
 ## Next steps
 
-1. Role-based screens (owner, cashier, kitchen) on top of the Supabase staff accounts; move customer names out of the publicly readable orders table.
+1. Move customer names and phone numbers out of the publicly readable orders table (Supabase), and keep PIN hashes out of public settings.
 2. Razorpay Checkout in the portal (the webhook is ready in `supabase/functions/razorpay-webhook`). The card form is test mode only (4111 1111 1111 1111 passes, 4000 0000 0000 0002 is declined).
 3. Real dish scans: upload a GLB per dish (with a USDZ for iPhone Quick Look) and load it with a glTF loader, keeping the procedural models as fallback.
 4. Thermal printer support (ESC/POS) for KOTs and bills, offline mode (PWA), multiple outlets.

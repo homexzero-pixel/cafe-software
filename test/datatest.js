@@ -53,3 +53,9 @@ assert(sp.length === 2 && sp[0].a + sp[1].a === 50000, 'split parts');
 assert(D.payParts({ total: 12300, pay: { method: 'card' } })[0].a === 12300, 'single method is one part');
 const al = D.allocate([{ m: 'cash', a: 30000 }, { m: 'upi', a: 40000 }], [42000, 28000]);
 assert(al[0].length === 2 && al[0][0].a === 30000 && al[0][1].a === 12000 && al[1][0].m === 'upi' && al[1][0].a === 28000, 'settle a table across two bills');
+// roles and PINs
+assert(D.sha256('abc') === 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad', 'sha-256 matches the standard test vector');
+const tm = D.team(D.SETTINGS); assert(tm.length === 1 && tm[0].role === 'owner' && D.findByPin(D.SETTINGS, '1234'), 'default owner with PIN 1234');
+const st3 = Object.assign({}, D.SETTINGS, { pinSalt: 'x', staff: [{ id: 'a', name: 'Asha', role: 'cashier', pinHash: D.pinHash('2468', 'x') }] });
+assert(D.findByPin(st3, '2468').name === 'Asha' && !D.findByPin(st3, '1234'), 'PIN finds the right person');
+assert(D.can('cashier', 'bill') && !D.can('cashier', 'refund') && !D.can('staff', 'bill') && D.can('owner', 'refund'), 'role permissions');

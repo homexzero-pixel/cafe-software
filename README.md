@@ -3,7 +3,7 @@
 Two separate apps that share one database, so an order placed by a guest appears on the café dashboard straight away:
 
 - **Customer portal**: guests scan the QR on their table, see the menu, open the camera and swipe through dishes shown in 3D on their own table, order, and pay by UPI, card or at the counter. Bills show each order ID with the GST invoice.
-- **Café dashboard** (`cafe.html`): kitchen order board, pickup screen for a TV, billing counter, bills, menu editor with 3D preview, recipe-based stock that deducts with every order, GST reports and printable table QR codes. Staff PIN: 1234.
+- **Café dashboard** (`cafe.html`): kitchen order board, pickup screen for a TV, billing counter, bills, menu editor with 3D preview, recipe-based stock that deducts with every order, GST reports and printable table QR codes. Staff sign in with their own PIN; the starting owner PIN is 1234.
 
 The build makes three pages from the same source:
 
@@ -32,6 +32,20 @@ The build makes three pages from the same source:
 - **Rewards at the counter**: enter the guest's phone to earn beans, or redeem them for a discount before GST.
 - **Digital bill**: send the full GST bill on WhatsApp (to the guest's number) or by email from the receipt or from Bills. The bill records that it was sent.
 - **Close the day**: sales, discounts, CGST and SGST, payments by method, unpaid and cancelled bills, and the cash drawer (opening float + cash sales − cash refunds = expected, then count it to see over or short). Saved with a downloadable report.
+
+## Team and roles (`cafe.html#team`)
+
+Everyone signs in with their own 4-digit PIN (the first sign-in is the starting owner, PIN 1234; add your team and change it). The sidebar shows only what each role may use, and every bill, payment, cancellation and day close records who did it.
+
+| | Owner | Cashier | Staff |
+|---|:-:|:-:|:-:|
+| Kitchen board, pickup screen, mark dishes sold out, record wastage | ✓ | ✓ | ✓ |
+| Billing, collect payments, cancel unpaid orders, close the day | ✓ | ✓ | |
+| Discounts above the cashier limit (10% by default) | ✓ | | |
+| Refunds and cancelling paid bills | ✓ | | |
+| Menu editing, purchases and stock counts, reports, customer app, team, setup | ✓ | | |
+
+A cashier can still do an owner-only action once if an owner types their PIN on the same screen; the bill stores who approved it. Five wrong PINs lock the keypad for 30 seconds. PINs are stored as salted SHA-256 hashes, but a 4-digit PIN is a lock for a shared counter, not real security. With Supabase, staff sign in with email accounts, the role comes from the `staff` table, and the database lets only owners change settings, ingredients and the team.
 
 ## Customer app controls (`cafe.html#app`)
 
@@ -108,6 +122,7 @@ In the Razorpay dashboard, add the webhook URL `https://<project>.supabase.co/fu
 - [ ] Receipt: WhatsApp opens a chat to the guest's number with the full GST bill.
 - [ ] Close the day: expected cash = float + cash sales − cash refunds; counting less shows "Short by".
 - [ ] Customer app page: pause ordering and turn off the table view; the guest's phone shows the notice, hides the camera and blocks Place order straight away.
+- [ ] Team: add a cashier and a staff member. The cashier can't open Reports or Setup; a 25% discount asks for an owner PIN and the bill shows who approved it. Staff see only Orders, Menu, Stock and the pickup screen.
 - [ ] Two phones order at the same moment: order numbers are consecutive with no duplicates.
 - [ ] Reports: GST summary taxable + CGST + SGST matches the bills; CSV export opens in a spreadsheet.
 
@@ -128,4 +143,4 @@ Claude Code reads `CLAUDE.md` for the architecture, data model, billing rules an
 | ![Overview](docs/screenshots/staff-overview.jpg) | ![Kitchen board](docs/screenshots/staff-kitchen.jpg) |
 | ![Billing](docs/screenshots/staff-billing.jpg) | ![GST invoice](docs/screenshots/staff-invoice.jpg) |
 | ![Customise](docs/screenshots/customise.jpg) | ![Pickup screen](docs/screenshots/pickup-screen.jpg) |
-| ![Customer app controls](docs/screenshots/customer-app-controls.jpg) | |
+| ![Customer app controls](docs/screenshots/customer-app-controls.jpg) | ![Team and roles](docs/screenshots/staff-team.jpg) |

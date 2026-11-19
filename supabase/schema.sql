@@ -44,7 +44,7 @@ create index if not exists orders_status  on public.orders (status);
 create table if not exists public.staff (           -- links a Supabase Auth user to a role
   user_id uuid primary key references auth.users (id) on delete cascade,
   name    text not null,
-  role    text not null check (role in ('owner','cashier','kitchen')),
+  role    text not null check (role in ('owner','cashier','staff')),
   created_at timestamptz not null default now()
 );
 
@@ -64,6 +64,12 @@ drop trigger if exists t_orders on public.orders;         create trigger t_order
 
 create or replace function public.is_staff() returns boolean language sql stable security definer set search_path = public as $$
   select exists (select 1 from public.staff where user_id = auth.uid())
+$$;
+create or replace function public.staff_role() returns text language sql stable security definer set search_path = public as $$
+  select role from public.staff where user_id = auth.uid()
+$$;
+create or replace function public.is_owner() returns boolean language sql stable security definer set search_path = public as $$
+  select coalesce(public.staff_role() = 'owner', false)
 $$;
 
 -- Next order number. Anyone may call it (guests place orders); the row lock makes it safe
@@ -111,10 +117,12 @@ create policy read_orders   on public.orders          for select using (true);
 -- Guests may place new, unpaid-or-pending orders only.
 create policy guest_order   on public.orders          for insert with check (status = 'new' and coalesce(data->'pay'->>'status','unpaid') in ('unpaid','pending','paid'));
 
--- Staff do everything else.
-create policy staff_settings on public.settings        for all using (public.is_staff()) with check (public.is_staff());
+-- Roles: owner changes settings, ingredients and the team; any staff member runs orders,
+-- marks dishes sold out and records stock movements. The app hides the rest by role too.
+create policy owner_settings on public.settings        for all using (public.is_owner()) with check (public.is_owner());
 create policy staff_dishes   on public.dishes          for all using (public.is_staff()) with check (public.is_staff());
-create policy staff_ingr     on public.ingredients     for all using (public.is_staff()) with check (public.is_staff());
+create policy owner_ingr     on public.ingredients     for all using (public.is_owner()) with check (public.is_owner());
+create policy owner_team     on public.staff           for all using (public.is_owner()) with check (public.is_owner());
 create policy staff_moves    on public.stock_movements for all using (public.is_staff()) with check (public.is_staff());
 create policy staff_orders   on public.orders          for all using (public.is_staff()) with check (public.is_staff());
 create policy staff_self     on public.staff           for select using (user_id = auth.uid() or public.is_staff());
@@ -126,5 +134,9 @@ grant execute on function public.set_order_no(int)           to authenticated;
 -- Realtime: push row changes to every open portal and staff screen.
 alter publication supabase_realtime add table public.settings, public.dishes, public.ingredients, public.stock_movements, public.orders;
 
+-- If you created this schema before roles existed, run once:
+--   alter table public.staff drop constraint if exists staff_role_check;
+--   update public.staff set role = 'staff' where role = 'kitchen';
+--   alter table public.staff add constraint staff_role_check check (role in ('owner','cashier','staff'));
 -- After creating your first user in Authentication > Users, make them the owner:
 --   insert into public.staff (user_id, name, role) values ('<user uuid>', 'Owner', 'owner');

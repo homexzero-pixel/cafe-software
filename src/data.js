@@ -14,6 +14,7 @@ const Data = (() => {
     // customer app switches, controlled from the café dashboard (Customer app page)
     orderingOpen: true, dineIn: true, takeaway: true, payUpi: true, payCard: true, payCounter: true,
     pickupAhead: true, customise: true, pairings: true, arView: true, notice: '',
+    cashierMaxDisc: 10, // % a cashier can give without the owner's PIN
   };
   const CATEGORIES = ['Coffee', 'Tea & coolers', 'Bakery', 'Breakfast', 'Mains', 'Snacks', 'Desserts'];
   // [id, name, category, price, veg, model, kcal, prep, from, to, desc, recipe, tags]
@@ -129,6 +130,44 @@ const Data = (() => {
     }
     return { earned, spent, pending, balance: Math.max(0, earned - spent) };
   }
+
+  /* Staff roles. PINs are kept as salted SHA-256 hashes in settings.staff (a 4-digit PIN is a convenience lock for a shared
+     counter, not real security: on Supabase, staff sign in with their own accounts and the database checks roles). */
+  const ROLES = {
+    owner: { label: 'Owner', pages: ['overview', 'orders', 'billing', 'bills', 'menu', 'stock', 'reports', 'board', 'app', 'tables', 'team', 'setup'],
+      can: ['bill', 'collect', 'cancel', 'cancelPaid', 'refund', 'discountAny', 'dayClose', 'dishEdit', 'dishToggle', 'stockBuy', 'stockCount', 'stockWaste', 'stockEdit', 'settings', 'export'] },
+    cashier: { label: 'Cashier', pages: ['overview', 'orders', 'billing', 'bills', 'menu', 'stock', 'board', 'tables'],
+      can: ['bill', 'collect', 'cancel', 'dayClose', 'dishToggle', 'stockWaste'] },
+    staff: { label: 'Staff', pages: ['orders', 'board', 'menu', 'stock'],
+      can: ['dishToggle', 'stockWaste'] },
+  };
+  function sha256(str) {
+    const K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2];
+    const bytes = Array.from(unescape(encodeURIComponent(str)), (c) => c.charCodeAt(0));
+    const l = bytes.length * 8; bytes.push(0x80); while (bytes.length % 64 !== 56) bytes.push(0);
+    for (let i = 7; i >= 0; i--) bytes.push(i > 3 ? 0 : (l >>> (i * 8)) & 0xff);
+    const H = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19], w = new Array(64);
+    const r = (x, n) => (x >>> n) | (x << (32 - n));
+    for (let o = 0; o < bytes.length; o += 64) {
+      for (let i = 0; i < 16; i++) w[i] = (bytes[o + i * 4] << 24) | (bytes[o + i * 4 + 1] << 16) | (bytes[o + i * 4 + 2] << 8) | bytes[o + i * 4 + 3];
+      for (let i = 16; i < 64; i++) { const s0 = r(w[i - 15], 7) ^ r(w[i - 15], 18) ^ (w[i - 15] >>> 3), s1 = r(w[i - 2], 17) ^ r(w[i - 2], 19) ^ (w[i - 2] >>> 10); w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0; }
+      let [a, b, c, d, e, f, g, h] = H;
+      for (let i = 0; i < 64; i++) {
+        const t1 = (h + (r(e, 6) ^ r(e, 11) ^ r(e, 25)) + ((e & f) ^ (~e & g)) + K[i] + w[i]) | 0, t2 = ((r(a, 2) ^ r(a, 13) ^ r(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) | 0;
+        h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+      }
+      H[0] = (H[0] + a) | 0; H[1] = (H[1] + b) | 0; H[2] = (H[2] + c) | 0; H[3] = (H[3] + d) | 0; H[4] = (H[4] + e) | 0; H[5] = (H[5] + f) | 0; H[6] = (H[6] + g) | 0; H[7] = (H[7] + h) | 0;
+    }
+    return H.map((x) => (x >>> 0).toString(16).padStart(8, '0')).join('');
+  }
+  const pinHash = (pin, salt) => sha256(`${salt || 'km'}:${pin}`);
+  // the team; before anyone is added, one owner with the old single PIN (1234 by default)
+  function team(s) {
+    if (Array.isArray(s.staff) && s.staff.length) return s.staff;
+    return [{ id: 'owner', name: 'Owner', role: 'owner', pinHash: pinHash(String(s.pin || '1234'), s.pinSalt), legacy: true }];
+  }
+  const findByPin = (s, pin) => team(s).find((m) => m.active !== false && m.pinHash === pinHash(pin, s.pinSalt)) || null;
+  const can = (role, perm) => !!(ROLES[role] && ROLES[role].can.includes(perm));
 
   /* Payments: a bill is paid by one method, or split ({ method: 'split', parts: [{ m, a }] }, a in paise) */
   function payParts(o) {
@@ -422,8 +461,8 @@ const Data = (() => {
       state.mode = 'connecting'; state.backend = 'supabase'; notify();
       const mod = await import(cfg.supabaseLib || 'https://esm.sh/@supabase/supabase-js@2');
       this.sb = mod.createClient(cfg.supabaseUrl, cfg.supabaseKey, { auth: { persistSession: true } });
-      try { const { data } = await this.sb.auth.getSession(); state.staffUser = data && data.session ? data.session.user.email : null; } catch (e) { state.staffUser = null; }
-      this.sb.auth.onAuthStateChange((_e, sess) => { state.staffUser = sess ? sess.user.email : null; notify(); });
+      try { const { data } = await this.sb.auth.getSession(); state.staffUser = data && data.session ? data.session.user.email : null; if (data && data.session) await this.loadRole(data.session.user.id); } catch (e) { state.staffUser = null; }
+      this.sb.auth.onAuthStateChange((_e, sess) => { state.staffUser = sess ? sess.user.email : null; if (sess) this.loadRole(sess.user.id).then(notify); else { state.staffRole = null; state.staffName = null; } notify(); });
       this.chan = this.sb.channel('cafe');
       for (const t of ['settings', 'dishes', 'ingredients', 'orders', 'stock_movements']) {
         this.chan.on('postgres_changes', { event: '*', schema: 'public', table: t }, (ev) => this.change(t, ev));
@@ -488,7 +527,11 @@ const Data = (() => {
       await this.up('ingredients', defaultStock().map((x) => { const { id, ...rest } = x; return { id, data: this.clean(rest) }; }));
       if (!this.rows.settings || !this.rows.settings._saved) await this.setSettings({ _saved: true });
     },
-    async signIn(email, password) { const r = await this.sb.auth.signInWithPassword({ email, password }); if (r.error) throw r.error; state.staffUser = r.data.user.email; notify(); },
+    // role and name from the staff table; an account without a row gets the most limited role
+    async loadRole(uid) {
+      try { const r = await this.sb.from('staff').select('name,role').eq('user_id', uid).maybeSingle(); const row = r.data || {}; state.staffRole = row.role === 'kitchen' ? 'staff' : row.role || 'staff'; state.staffName = row.name || null; } catch (e) { state.staffRole = 'staff'; }
+    },
+    async signIn(email, password) { const r = await this.sb.auth.signInWithPassword({ email, password }); if (r.error) throw r.error; state.staffUser = r.data.user.email; await this.loadRole(r.data.user.id); notify(); },
     async signOut() { await this.sb.auth.signOut(); state.staffUser = null; notify(); },
   };
   let writeErrorHandler = null;
@@ -534,7 +577,7 @@ const Data = (() => {
 
   return {
     SETTINGS, CATEGORIES, defaultMenu, defaultStock, money, rupees, compact, NUM, toMin, pad2, fy, dayKey, startOfDay, time12, dateShort, dateLong, hm,
-    bill, computeStock, consumption, dishStatus, optionGroups, resolveOpts, payParts, allocate, optionsToText, optionsFromText, CATEGORY_OPTIONS, beans, cleanPhone, inWindow, foodCost, rid, orderIds, sampleOrders,
+    bill, computeStock, consumption, dishStatus, optionGroups, resolveOpts, payParts, allocate, ROLES, sha256, pinHash, team, findByPin, can, optionsToText, optionsFromText, CATEGORY_OPTIONS, beans, cleanPhone, inWindow, foodCost, rid, orderIds, sampleOrders,
     state, on, notify, init, api, derived, safeLS, onWriteError: (fn) => { writeErrorHandler = fn; },
   };
 })();
