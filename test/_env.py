@@ -6,7 +6,7 @@ import os, pathlib
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 os.chdir(ROOT)                      # so 'shots/...' and 'test/...' paths work
 (ROOT / 'shots').mkdir(exist_ok=True)
-URL = (ROOT / 'dist' / 'index.html').as_uri()
+URL = (ROOT / 'dist' / 'demo.html').as_uri()   # combined build: customer and staff routes in one page
 ARGS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist',
         '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--allow-file-access-from-files']
 def launch_opts():

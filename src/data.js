@@ -9,6 +9,8 @@ const Data = (() => {
     gstRate: 5, taxInclusive: false,
     upiId: 'yourcafe@upi', upiName: 'Kaapi & Marble',
     prefix: 'KM', tables: 12, pin: '1234', portalUrl: '', timeMenus: true,
+    // rewards: 1 bean per ₹beanPer of paid bills; redeemBeans beans = ₹redeemValue off (a discount before GST)
+    loyalty: true, beanPer: 10, redeemBeans: 100, redeemValue: 50,
   };
   const CATEGORIES = ['Coffee', 'Tea & coolers', 'Bakery', 'Breakfast', 'Mains', 'Snacks', 'Desserts'];
   // [id, name, category, price, veg, model, kcal, prep, from, to, desc, recipe, tags]
@@ -53,6 +55,78 @@ const Data = (() => {
     ['brownie', 'Brownie', 'pc', 18, 8, 45, 'In-house'], ['icecream', 'Vanilla ice cream', 'g', 4000, 1500, 0.28, 'Local dairy'],
     ['herbs', 'Seasoning and herbs', 'g', 2000, 600, 0.3, 'Wholesale market'], ['cups', 'Takeaway cups and lids', 'pc', 300, 150, 4, 'Packaging supplier'],
   ];
+  /* Customisation (size, milk, add-ons, spice). A group is { name, many, choices: [{ n, p (₹ extra), r ({ingredient: qty} extra) }] }.
+     For one-choice groups the first choice is the default. A dish without its own `options` uses its category's set. */
+  const CHOICE = (n, p = 0, r) => (r ? { n, p, r } : { n, p });
+  const SWEET = { name: 'Sweetness', many: false, choices: [CHOICE('Regular sugar'), CHOICE('Less sugar'), CHOICE('No sugar')] };
+  const CATEGORY_OPTIONS = {
+    'Coffee': [
+      { name: 'Size', many: false, choices: [CHOICE('Regular'), CHOICE('Large', 40, { milk: 60 })] },
+      { name: 'Milk', many: false, choices: [CHOICE('Dairy milk'), CHOICE('Oat milk', 50), CHOICE('Almond milk', 50)] },
+      { name: 'Add-ons', many: true, choices: [CHOICE('Extra shot', 45, { beans: 9 }), CHOICE('Whipped cream', 30, { cream: 20 }), CHOICE('Hazelnut syrup', 35)] },
+      SWEET,
+    ],
+    'Tea & coolers': [{ name: 'Size', many: false, choices: [CHOICE('Regular'), CHOICE('Large', 30, { milk: 50 })] }, SWEET],
+    'Bakery': [{ name: 'Serve', many: false, choices: [CHOICE('As it is'), CHOICE('Warmed up')] }],
+    'Breakfast': [{ name: 'Add-ons', many: true, choices: [CHOICE('Extra butter', 20, { butter: 10 }), CHOICE('Side of berries', 60, { blueberry: 20 })] }],
+    'Mains': [
+      { name: 'Spice', many: false, choices: [CHOICE('Regular'), CHOICE('Mild'), CHOICE('Extra hot')] },
+      { name: 'Add-ons', many: true, choices: [CHOICE('Extra cheese', 40, { cheese: 1 }), CHOICE('Side of fries', 90, { potato: 120, oil: 30 })] },
+    ],
+    'Snacks': [{ name: 'Add-ons', many: true, choices: [CHOICE('Extra dip', 25)] }],
+    'Desserts': [{ name: 'Add-ons', many: true, choices: [CHOICE('Scoop of ice cream', 60, { icecream: 60 })] }],
+  };
+  const optionGroups = (d) => (d && Array.isArray(d.options) ? d.options : (d && CATEGORY_OPTIONS[d.category]) || []);
+  // picks: { groupIndex: [choiceIndex, ...] } -> chosen names (defaults left out), extra price (₹) and extra recipe
+  function resolveOpts(d, picks = {}) {
+    const opts = [], r = {}; let add = 0;
+    optionGroups(d).forEach((g, gi) => {
+      const sel = picks[gi] || (g.many ? [] : [0]);
+      for (const ci of sel) {
+        const c = g.choices[ci]; if (!c) continue;
+        if (g.many || ci !== 0) opts.push(c.n);
+        add += Number(c.p) || 0;
+        for (const k in c.r || {}) r[k] = (r[k] || 0) + c.r[k];
+      }
+    });
+    return { opts, add, r };
+  }
+  // "Size: Regular, Large +40 [milk 60]" lines <-> groups; a trailing * on the name allows several choices
+  function optionsToText(groups) {
+    return (groups || []).map((g) => `${g.name}${g.many ? '*' : ''}: ${g.choices.map((c) => `${c.n}${c.p ? ' +' + c.p : ''}${c.r ? ' [' + Object.entries(c.r).map(([k, v]) => k + ' ' + v).join(', ') + ']' : ''}`).join(', ')}`).join('\n');
+  }
+  function optionsFromText(text) {
+    const out = [];
+    for (const line of String(text || '').split('\n')) {
+      const m = /^\s*([^:]+?)(\*)?\s*:\s*(.+)$/.exec(line); if (!m) continue;
+      const choices = [];
+      for (const part of m[3].match(/[^,\[]+(\[[^\]]*\])?/g) || []) {
+        const cm = /^\s*(.+?)(?:\s*\+\s*(\d+(?:\.\d+)?))?\s*(?:\[([^\]]*)\])?\s*$/.exec(part); if (!cm || !cm[1].trim()) continue;
+        const c = { n: cm[1].trim(), p: cm[2] ? Number(cm[2]) : 0 };
+        if (cm[3]) { c.r = {}; for (const kv of cm[3].split(',')) { const km = /^\s*(\S+)\s+([\d.]+)\s*$/.exec(kv); if (km) c.r[km[1]] = Number(km[2]); } }
+        choices.push(c);
+      }
+      if (choices.length) out.push({ name: m[1].trim(), many: !!m[2], choices });
+    }
+    return out;
+  }
+
+  /* Rewards ("beans"), derived from orders like stock: earned on paid bills, spent when redeemed */
+  const cleanPhone = (p) => { const d = String(p || '').replace(/\D/g, '').slice(-10); return d.length === 10 ? d : ''; };
+  function beans(phone, orders, s = SETTINGS) {
+    const ph = cleanPhone(phone); let earned = 0, spent = 0, pending = 0;
+    if (!ph) return { earned, spent, pending, balance: 0 };
+    const per = Math.max(1, Number(s.beanPer) || 10) * 100;
+    for (const o of orders || []) {
+      if (o.phone !== ph || o.status === 'cancelled') continue;
+      spent += Number(o.beans) || 0;
+      const p = o.pay || {};
+      if (p.status === 'paid') earned += Math.floor((o.total || 0) / per);
+      else if (p.status !== 'refunded') pending += Math.floor((o.total || 0) / per);
+    }
+    return { earned, spent, pending, balance: Math.max(0, earned - spent) };
+  }
+
   function defaultMenu() {
     return M.map(([id, name, category, price, veg, model, kcal, prep, from, to, desc, recipe, tags], i) => ({
       id, name, category, price, veg, model, kcal, prep, from, to, desc, tags, active: true, sort: i,
@@ -114,7 +188,7 @@ const Data = (() => {
   }
   function consumption(lines, menuById) {
     const use = {};
-    for (const l of lines) { const d = menuById[l.id]; if (!d) continue; for (const r of d.recipe || []) use[r.ing] = (use[r.ing] || 0) + r.qty * l.qty; }
+    for (const l of lines) { const d = menuById[l.id]; if (!d) continue; for (const r of d.recipe || []) use[r.ing] = (use[r.ing] || 0) + r.qty * l.qty; for (const k in l.xr || {}) use[k] = (use[k] || 0) + l.xr[k] * l.qty; }
     return use;
   }
   function inWindow(d, now) {
@@ -440,7 +514,7 @@ const Data = (() => {
 
   return {
     SETTINGS, CATEGORIES, defaultMenu, defaultStock, money, rupees, compact, NUM, toMin, pad2, fy, dayKey, startOfDay, time12, dateShort, dateLong, hm,
-    bill, computeStock, consumption, dishStatus, inWindow, foodCost, rid, orderIds, sampleOrders,
+    bill, computeStock, consumption, dishStatus, optionGroups, resolveOpts, optionsToText, optionsFromText, CATEGORY_OPTIONS, beans, cleanPhone, inWindow, foodCost, rid, orderIds, sampleOrders,
     state, on, notify, init, api, derived, safeLS, onWriteError: (fn) => { writeErrorHandler = fn; },
   };
 })();

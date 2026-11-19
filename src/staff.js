@@ -13,9 +13,14 @@ const Staff = (() => {
 
   const PAGES = [
     ['overview', 'home', 'Overview'], ['orders', 'bell', 'Orders'], ['billing', 'register', 'Billing'], ['bills', 'receipt', 'Bills'],
-    ['menu', 'utensils', 'Menu'], ['stock', 'box', 'Stock'], ['reports', 'chart', 'Reports'], ['tables', 'qr', 'Tables & QR'], ['setup', 'sliders', 'Setup'],
+    ['menu', 'utensils', 'Menu'], ['stock', 'box', 'Stock'], ['reports', 'chart', 'Reports'], ['board', 'tv', 'Pickup screen'], ['tables', 'qr', 'Tables & QR'], ['setup', 'sliders', 'Setup'],
   ];
-  const href = (p) => '#staff' + (p === 'overview' ? '' : '-' + p);
+  const SPLIT = window.KM_APP === 'cafe';
+  // in the standalone dashboard (cafe.html) routes are #overview, #orders...; in the combined demo they are #staff, #staff-orders...
+  const href = (p) => (SPLIT ? '#' + p : '#staff' + (p === 'overview' ? '' : '-' + p));
+  // links into the customer portal, which is a separate page (index.html) in the split build
+  const custHref = (h) => (SPLIT ? 'index.html' + h : h);
+  const custAttrs = SPLIT ? ' target="_blank" rel="noopener"' : '';
   const live = () => S().orders.filter((o) => o.status !== 'cancelled');
   const sales = (o) => o.status !== 'cancelled' && (!o.pay || o.pay.status !== 'refunded');
   const unpaidOrders = () => S().orders.filter((o) => o.status !== 'cancelled' && o.pay && (o.pay.status === 'unpaid' || o.pay.status === 'pending'));
@@ -36,7 +41,7 @@ const Staff = (() => {
         <input class="in" type="email" name="email" autocomplete="username" placeholder="Email" required>
         <input class="in" type="password" name="password" autocomplete="current-password" placeholder="Password" required>
         <button class="btn saffron lg block" type="submit">Sign in</button></form>
-      <a href="#welcome" style="color:#E6D6C6;font-size:14px">Back to start</a></div></div>`;
+      ${SPLIT ? '' : '<a href="#welcome" style="color:#E6D6C6;font-size:14px">Back to start</a>'}</div></div>`;
       $('#supa-login', root).onsubmit = async (e) => {
         e.preventDefault(); const f = e.target;
         try { await D.api.adapter.signIn(f.email.value.trim(), f.password.value); unlocked = true; UI.unlockAudio(); render(); } catch (err) { toast('Email or password is wrong', 'bad'); }
@@ -50,7 +55,7 @@ const Staff = (() => {
       <p style="margin:0;color:#E6D6C6">Enter the 4-digit staff PIN${def ? '. The starting PIN is 1234; change it in Setup.' : '.'}</p>
       <div class="pin-dots" aria-hidden="true">${[0, 1, 2, 3].map((i) => `<i class="${i < pinBuf.length ? 'on' : ''}"></i>`).join('')}</div>
       <div class="pinpad" role="group" aria-label="PIN keypad">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<button data-pin="${n}">${n}</button>`).join('')}<button data-pin="clr" aria-label="Clear">${icon('x')}</button><button data-pin="0">0</button><button data-pin="del" aria-label="Delete">${icon('back')}</button></div>
-      <a href="#welcome" style="color:#E6D6C6;font-size:14px">Back to start</a></div></div>`;
+      ${SPLIT ? '' : '<a href="#welcome" style="color:#E6D6C6;font-size:14px">Back to start</a>'}</div></div>`;
   }
   function pinPress(k) {
     if (k === 'clr') pinBuf = ''; else if (k === 'del') pinBuf = pinBuf.slice(0, -1); else if (pinBuf.length < 4) pinBuf += k;
@@ -70,7 +75,7 @@ const Staff = (() => {
       <span class="plate">${esc(S().settings.name)}</span>
       ${PAGES.map(([k, ic, l]) => `<a href="${href(k)}" ${page === k ? 'aria-current="page"' : ''}>${icon(ic)}<span>${l}</span>${k === 'orders' && nNew ? `<span class="badge">${nNew}</span>` : ''}${k === 'stock' && nLow ? `<span class="badge" style="background:#FFD9D2;color:#7A1E10">${nLow}</span>` : ''}</a>`).join('')}
       <div class="foot"><div class="sync ${sync[0]}"><span class="dot"></span>${sync[1]}</div>
-      <a class="btn quiet sm" href="#menu">${icon('utensils', 'sm')}Customer view</a>
+      <a class="btn quiet sm" href="${custHref('#menu')}"${custAttrs}>${icon('utensils', 'sm')}Customer view</a>
       <button class="btn quiet sm" data-a="lock">${icon('lock', 'sm')}Lock</button></div></nav>`;
   }
   function render() {
@@ -78,6 +83,7 @@ const Staff = (() => {
     clearInterval(ticker);
     if (!unlocked) return lockScreen();
     const y = window.scrollY;
+    if (page === 'board') { root.innerHTML = board(); return; }
     const body = { overview: overview, orders: orders, billing: billing, bills: bills, menu: menuPage, stock: stockPage, reports: reports, tables: tables, setup: setup }[page] || overview;
     root.innerHTML = `<div class="staff">
       <div class="mtop"><button class="btn icon sm quiet" data-a="side" aria-label="Open navigation" style="background:rgba(255,255,255,.1);color:#fff">${icon('menu')}</button><span class="plate">${esc(S().settings.name)}</span></div>
@@ -158,15 +164,18 @@ const Staff = (() => {
     const tSales = sumBy(today, (o) => o.total), ySales = sumBy(yday, (o) => o.total);
     const delta = ySales ? Math.round(((tSales - ySales) / ySales) * 100) : null;
     const up = unpaidOrders();
+    // average kitchen time: placed to ready, for today's orders that reached ready
+    const kts = today.map((o) => { const r = (o.log || []).find((x) => x.s === 'ready'); return r ? (r.at - o.createdAt) / 60000 : null; }).filter((x) => x != null && x >= 0 && x < 180);
+    const kt = kts.length ? Math.round(kts.reduce((a, b) => a + b, 0) / kts.length) : 0;
     const kpis = `<div class="kpis">
       <div class="kpi"><div class="l">Sales today</div><div class="v money">${D.money(tSales)}</div><div class="d ${delta == null ? '' : delta >= 0 ? 'up' : 'down'}">${delta == null ? 'No sales yesterday by this time' : `${delta >= 0 ? '+' : ''}${delta}% vs this time yesterday`}</div></div>
-      <div class="kpi"><div class="l">Orders today</div><div class="v num">${today.length}</div><div class="d">${today.filter((o) => o.source === 'portal').length} from the customer portal</div></div>
+      <div class="kpi"><div class="l">Orders today</div><div class="v num">${today.length}</div><div class="d">${today.filter((o) => o.source === 'portal').length} from the portal${kt ? `, kitchen ${kt} min avg` : ''}</div></div>
       <div class="kpi"><div class="l">Average order</div><div class="v money">${D.money(today.length ? Math.round(tSales / today.length / 100) * 100 : 0)}</div><div class="d">GST included</div></div>
       <div class="kpi"><div class="l">Waiting for payment</div><div class="v money">${D.money(sumBy(up, (o) => o.total))}</div><div class="d">${up.length} bill${up.length === 1 ? '' : 's'}</div></div></div>`;
     if (!all.length) {
-      return head('Today', D.dateLong(now), `<a class="btn" href="#staff-billing">${icon('plus')}New bill</a>`) + modeBanner() + kpis +
+      return head('Today', D.dateLong(now), `<a class="btn" href="${href('billing')}">${icon('plus')}New bill</a>`) + modeBanner() + kpis +
         `<div class="box"><div class="empty" style="padding:28px 10px">${icon('chart')}<h2>No sales yet</h2><p>Place a test order from the customer portal, or add two weeks of sample sales to explore the dashboard and reports. Sample sales are marked and can be removed in Setup.</p>
-        <div class="row" style="justify-content:center;margin-top:14px;flex-wrap:wrap"><a class="btn" href="#menu">Open the customer portal</a><button class="btn ghost" data-a="sample">Add sample sales</button></div></div></div>`;
+        <div class="row" style="justify-content:center;margin-top:14px;flex-wrap:wrap"><a class="btn" href="${custHref('#menu')}"${custAttrs}>Open the customer portal</a><button class="btn ghost" data-a="sample">Add sample sales</button></div></div></div>`;
     }
     const hours = []; for (let h = 7; h <= 23; h++) hours.push(h);
     const byHour = hours.map((h) => { const v = sumBy(today.filter((o) => new Date(o.createdAt).getHours() === h), (o) => o.total); return { l: h % 12 === 0 ? '12' + (h < 12 ? 'a' : 'p') : (h % 12) + (h < 12 ? 'a' : 'p'), v, tip: `<b>${D.money(v)}</b> between ${D.hm(D.pad2(h) + ':00')} and ${D.hm(D.pad2((h + 1) % 24) + ':00')}` }; });
@@ -177,10 +186,10 @@ const Staff = (() => {
     const pay = ['upi', 'card', 'cash'].map((k) => ({ l: { upi: 'UPI', card: 'Card', cash: 'Cash' }[k], c: C[k], v: sumBy(paid.filter((o) => o.pay.method === k), (o) => o.total) }));
     const attn = [];
     for (const o of up.slice(0, 5)) attn.push(`<button data-bill="${esc(o.id)}"><span class="ico ${o.pay.status === 'pending' ? 'warn' : 'info'}">${icon(o.pay.status === 'pending' ? 'upi' : 'receipt')}</span><span><span class="t">${esc(o.id)} ${o.pay.status === 'pending' ? 'UPI to confirm' : 'not paid'}</span><br><span class="s">${o.table ? 'Table ' + o.table : 'Takeaway'}, ${D.money(o.total)}, ${UI.ago(o.createdAt)} ago</span></span></button>`);
-    for (const s of stockIssues().slice(0, 6)) attn.push(`<a href="#staff-stock"><span class="ico ${s.state === 'out' ? 'bad' : 'warn'}">${icon('box')}</span><span><span class="t">${esc(s.name)} ${s.state === 'out' ? 'out of stock' : 'running low'}</span><br><span class="s">${fmtQty(Math.max(0, s.qty), s.unit)} left, reorder at ${fmtQty(s.reorder, s.unit)}</span></span></a>`);
+    for (const s of stockIssues().slice(0, 6)) attn.push(`<a href="${href('stock')}"><span class="ico ${s.state === 'out' ? 'bad' : 'warn'}">${icon('box')}</span><span><span class="t">${esc(s.name)} ${s.state === 'out' ? 'out of stock' : 'running low'}</span><br><span class="s">${fmtQty(Math.max(0, s.qty), s.unit)} left, reorder at ${fmtQty(s.reorder, s.unit)}</span></span></a>`);
     const soldOut = S().menu.filter((d) => status(d).reason === 'stock');
-    if (soldOut.length) attn.push(`<a href="#staff-menu"><span class="ico bad">${icon('utensils')}</span><span><span class="t">${soldOut.length} dish${soldOut.length > 1 ? 'es' : ''} sold out</span><br><span class="s">${esc(soldOut.map((d) => d.name).join(', '))}</span></span></a>`);
-    return head('Today', D.dateLong(now), `<a class="btn ghost" href="#staff-orders">${icon('bell')}Kitchen board</a><a class="btn" href="#staff-billing">${icon('plus')}New bill</a>`) + modeBanner() + kpis +
+    if (soldOut.length) attn.push(`<a href="${href('menu')}"><span class="ico bad">${icon('utensils')}</span><span><span class="t">${soldOut.length} dish${soldOut.length > 1 ? 'es' : ''} sold out</span><br><span class="s">${esc(soldOut.map((d) => d.name).join(', '))}</span></span></a>`);
+    return head('Today', D.dateLong(now), `<a class="btn ghost" href="${href('orders')}">${icon('bell')}Kitchen board</a><a class="btn" href="${href('billing')}">${icon('plus')}New bill</a>`) + modeBanner() + kpis +
       `<div class="dash"><div class="col">
         <div class="box"><h2>Sales by hour <span class="faint">Today, GST included</span></h2>${columns(byHour, { label: 'Sales by hour today', fmtAxis: (v) => D.compact(v) })}</div>
         <div class="box"><h2>Last 14 days <span class="faint">Daily sales</span></h2>${columns(days, { label: 'Daily sales, last 14 days', fmtAxis: (v) => D.compact(v), maxLabels: 7 })}</div>
@@ -198,8 +207,8 @@ const Staff = (() => {
     const next = { new: ['preparing', 'Start preparing'], preparing: ['ready', 'Mark ready'], ready: ['served', 'Served'] }[o.status];
     const fresh = o.status === 'new' && Date.now() - o.createdAt < 120000;
     return `<article class="kot${fresh ? ' fresh' : ''}" aria-label="Order ${esc(o.id)}">
-      <div class="hd"><span class="id">${esc(o.id)}</span><span class="where">${o.table ? 'Table ' + o.table : 'Takeaway'}</span><span class="age" data-age="${o.createdAt}">${UI.mmss(o.createdAt)}</span></div>
-      <ul>${(o.items || []).map((l) => `<li><b>${l.qty}×</b><span>${esc(l.name)}${l.note ? `<span class="n">${esc(l.note)}</span>` : ''}</span></li>`).join('')}</ul>
+      <div class="hd"><span class="id">${esc(o.id)}</span><span class="where">${o.table ? 'Table ' + o.table : 'Takeaway'}</span>${o.pickupAt ? `<span class="pick">Pickup ${D.time12(o.pickupAt)}</span>` : ''}<span class="age" data-age="${o.createdAt}">${UI.mmss(o.createdAt)}</span></div>
+      <ul>${(o.items || []).map((l) => `<li><b>${l.qty}×</b><span>${esc(l.name)}${(l.opts || []).length ? `<span class="n opts">${esc(l.opts.join(', '))}</span>` : ''}${l.note ? `<span class="n">${esc(l.note)}</span>` : ''}</span></li>`).join('')}</ul>
       <div class="ft">${payc}<span class="chip">${o.source === 'portal' ? 'Portal' : 'Counter'}</span>
         <button class="btn xs ghost" data-kot="${esc(o.id)}" aria-label="Kitchen ticket">${icon(UI.canPrint() ? 'print' : 'download', 'sm')}KOT</button>
         <button class="btn xs danger ghost" data-cancel="${esc(o.id)}">Cancel</button>
@@ -230,7 +239,7 @@ const Staff = (() => {
   }
   function kotText(o) {
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>KOT ${esc(o.id)}</title><style>body{font-family:ui-monospace,Menlo,monospace;font-size:14px;max-width:300px;margin:10px auto}h1{font-size:20px;margin:0}hr{border:0;border-top:1px dashed #000}li{margin:4px 0}small{display:block;color:#444}</style></head><body>
-      <h1>KOT ${esc(o.id)}</h1><div>${o.table ? 'Table ' + o.table : 'Takeaway'}, ${new Date(o.createdAt).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })}</div><hr><ul style="padding-left:18px">${(o.items || []).map((l) => `<li><b>${l.qty} x ${esc(l.name)}</b>${l.note ? `<small>${esc(l.note)}</small>` : ''}</li>`).join('')}</ul><hr></body></html>`;
+      <h1>KOT ${esc(o.id)}</h1><div>${o.table ? 'Table ' + o.table : 'Takeaway'}, ${new Date(o.createdAt).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })}</div><hr><ul style="padding-left:18px">${(o.items || []).map((l) => `<li><b>${l.qty} x ${esc(l.name)}</b>${(l.opts || []).length ? `<br><small>${esc(l.opts.join(', '))}</small>` : ''}${l.note ? `<br><small>${esc(l.note)}</small>` : ''}</li>`).join('')}</ul><hr></body></html>`;
   }
   function printHtml(html, inner) {
     let area = $('#print-area'); if (!area) { area = document.createElement('div'); area.id = 'print-area'; document.body.appendChild(area); }
@@ -375,7 +384,7 @@ const Staff = (() => {
   function billsFiltered() {
     const r = rangeOf(bf.range), ql = bf.q.trim().toLowerCase();
     return S().orders.filter((o) => inRange(o, r) && (bf.status === 'all' || (bf.status === 'unpaid' ? o.status !== 'cancelled' && o.pay && o.pay.status !== 'paid' && o.pay.status !== 'refunded' : bf.status === 'paid' ? o.pay && o.pay.status === 'paid' && o.status !== 'cancelled' : o.status === 'cancelled' || (o.pay && o.pay.status === 'refunded')))
-      && (!ql || o.id.toLowerCase().includes(ql) || String(o.table || '').includes(ql) || (o.items || []).some((l) => l.name.toLowerCase().includes(ql))));
+      && (!ql || o.id.toLowerCase().includes(ql) || String(o.table || '').includes(ql) || (o.phone && ql.replace(/\D/g, '').length >= 4 && o.phone.includes(ql.replace(/\D/g, ''))) || (o.items || []).some((l) => l.name.toLowerCase().includes(ql))));
   }
   function payCell(o) {
     const p = o.pay || {};
@@ -387,7 +396,7 @@ const Staff = (() => {
   function bills() {
     const list = billsFiltered(), tot = sumBy(list.filter(sales), (o) => o.total);
     return head('Bills', `${list.length} bill${list.length === 1 ? '' : 's'}, ${D.money(tot)} in sales for this view.`, `<button class="btn ghost sm" data-a="bcsv">${icon('download', 'sm')}Export CSV</button>`) +
-      `<div class="toolbar"><label class="search">${icon('search')}<input type="search" placeholder="Order ID, table or dish" value="${esc(bf.q)}" data-bq aria-label="Search bills"></label>
+      `<div class="toolbar"><label class="search">${icon('search')}<input type="search" placeholder="Order ID, table, dish or phone" value="${esc(bf.q)}" data-bq aria-label="Search bills"></label>
         <div class="pills">${[['today', 'Today'], ['yesterday', 'Yesterday'], ['7d', '7 days'], ['30d', '30 days'], ['all', 'All']].map(([k, l]) => `<button class="pill" data-br="${k}" aria-pressed="${bf.range === k}">${l}</button>`).join('')}</div>
         <div class="pills">${[['all', 'Any status'], ['unpaid', 'Unpaid'], ['paid', 'Paid'], ['void', 'Cancelled']].map(([k, l]) => `<button class="pill" data-bs="${k}" aria-pressed="${bf.status === k}">${l}</button>`).join('')}</div></div>
       <div class="tblwrap"><table class="tbl"><thead><tr><th>Order</th><th>Time</th><th>Table</th><th>Items</th><th class="r">Total</th><th>Payment</th><th>Status</th></tr></thead><tbody>
@@ -455,6 +464,8 @@ const Staff = (() => {
           <div class="grid3"><label class="field"><span>Served from</span><input class="in" type="time" name="from" value="${esc(d.from)}"></label><label class="field"><span>Until</span><input class="in" type="time" name="to" value="${esc(d.to)}"></label>
           <label class="field"><span>Labels</span><input class="in" name="tags" value="${esc((d.tags || []).join(', '))}" placeholder="Bestseller, Spicy"></label></div>
           <small class="faint" style="margin-top:-6px">Leave the times empty to serve all day.</small>
+          <label class="field"><span>Customisation</span><textarea class="in" name="options" rows="4" style="font-family:var(--f-mono);font-size:13px" placeholder="Size: Regular, Large +40 [milk 60]">${esc(D.optionsToText(D.optionGroups(d)))}</textarea>
+            <small>One group per line. Prices are extra ₹; ingredients in brackets come off stock. Add * after the group name to allow several, for example <code>Add-ons*: Extra shot +45 [beans 9]</code>. The first choice of a one-choice group is the default. Leave empty for none.</small></label>
           <div class="field"><span>Recipe, per serving</span><div data-recipe style="display:grid;gap:8px"></div><button type="button" class="btn quiet sm" data-radd style="justify-self:start">${icon('plus', 'sm')}Add ingredient</button></div>
           <div class="banner info" data-cost style="margin:0"></div>
         </form></div>`,
@@ -490,9 +501,34 @@ const Staff = (() => {
       if ((val('from') && !val('to')) || (!val('from') && val('to'))) { toast('Set both serving times, or leave both empty', 'warn'); return false; }
       Object.assign(d, { name, category: val('category') || 'Other', price: Math.round(price * 100) / 100, veg: val('veg') === '1', kcal: parseInt(val('kcal'), 10) || 0, prep: parseInt(val('prep'), 10) || 0, desc: val('desc'), from: val('from'), to: val('to'), tags: val('tags') ? val('tags').split(',').map((t) => t.trim()).filter(Boolean) : [] });
       d.recipe = d.recipe.filter((r) => r.qty > 0);
+      const optText = val('options'), parsed = D.optionsFromText(optText);
+      if (optText && !parsed.length) { toast('Check the customisation lines, for example Size: Regular, Large +40', 'warn'); return false; }
+      if (D.optionsToText(parsed) !== D.optionsToText(D.CATEGORY_OPTIONS[d.category] || []) || Array.isArray(d.options)) d.options = parsed;
       if (!d.id) { let base = slug(name), idn = base, k = 2; while (X().menuById[idn]) idn = base + '-' + k++; d.id = idn; }
       try { await D.api.putDish(d); toast(`${name} saved`); } catch (e) { return false; }
     }
+  }
+
+  /* ---------------- pickup screen (order status board for a TV at the counter) ---------------- */
+  const boardSeen = new Set(); let boardPrimed = false, boardClock = 0;
+  function board() {
+    const s = S().settings, today = D.startOfDay();
+    const live = S().orders.filter((o) => o.createdAt >= today && ['new', 'preparing', 'ready'].includes(o.status)).sort((a, b) => a.createdAt - b.createdAt);
+    const prep = live.filter((o) => o.status !== 'ready'), ready = live.filter((o) => o.status === 'ready');
+    const fresh = [];
+    for (const o of ready) { if (!boardSeen.has(o.id)) { if (boardPrimed) fresh.push(o.id); boardSeen.add(o.id); } }
+    if (fresh.length && soundOn) UI.chime();
+    boardPrimed = true;
+    const num = (o, flash) => `<div class="tv-n${flash ? ' flash' : ''}">${esc(String(o.no || o.id))}<small>${o.table ? 'Table ' + o.table : o.pickupAt ? 'Pickup ' + D.time12(o.pickupAt) : 'Takeaway'}</small></div>`;
+    clearInterval(boardClock);
+    boardClock = setInterval(() => { const c = $('.tv-h .clock', root); if (c) c.textContent = D.time12(Date.now()); else clearInterval(boardClock); }, 15000);
+    return `<div class="tvboard" role="region" aria-label="Order status">
+      <div class="tv-h"><span class="plate">${esc(s.name)}</span><span class="clock">${D.time12(Date.now())}</span></div>
+      <div class="tv-cols"><section class="tv-col"><h2>${icon('clock', 'lg')}Preparing</h2><div class="tv-nums">${prep.map((o) => num(o)).join('') || '<p style="color:#CDB9A5;font-size:20px">No orders in the kitchen.</p>'}</div></section>
+        <section class="tv-col ready" aria-live="polite"><h2>${icon('check', 'lg')}Ready to collect</h2><div class="tv-nums">${ready.map((o) => num(o, fresh.includes(o.id))).join('') || '<p style="color:#CDB9A5;font-size:20px">Ready orders show here.</p>'}</div></section></div>
+      <div class="tv-f"><span>Your order number is on your bill and in the app, for example ${esc(s.prefix || 'KM')}-${ready[0] ? ready[0].no : prep[0] ? prep[0].no : 1001} shows as ${ready[0] ? ready[0].no : prep[0] ? prep[0].no : 1001}.</span>
+        <button class="btn quiet sm" data-a="sound" style="background:rgba(255,255,255,.08);color:#fff">${icon(soundOn ? 'sound' : 'mute', 'sm')}${soundOn ? 'Chime on' : 'Chime off'}</button>
+        <a class="btn quiet sm" href="${href('overview')}" style="background:rgba(255,255,255,.08);color:#fff">Back to dashboard</a></div></div>`;
   }
 
   /* ---------------- stock ---------------- */
@@ -641,15 +677,15 @@ const Staff = (() => {
   }
 
   /* ---------------- tables & QR ---------------- */
-  function portalBase() { const s = S().settings; if (s.portalUrl) return s.portalUrl.replace(/#.*$/, ''); return location.href.replace(/#.*$/, ''); }
+  function portalBase() { const s = S().settings; if (s.portalUrl) return s.portalUrl.replace(/#.*$/, ''); return location.href.replace(/#.*$/, '').replace(/cafe\.html$/, 'index.html'); }
   function tables() {
     const s = S().settings, n = s.tables || 12, base = portalBase();
     return head('Tables & QR', 'Print a QR card for each table. Guests scan it to open the menu with their table already set.', `<button class="btn" data-a="qrsheet">${icon('download')}Printable QR sheet</button>`) +
       `<div class="box" style="margin-bottom:14px;display:grid;gap:12px"><div class="grid2" style="grid-template-columns:160px 1fr"><label class="field"><span>Number of tables</span><input class="in" inputmode="numeric" value="${n}" data-tn></label>
         <label class="field"><span>Menu link the QR codes open</span><input class="in" value="${esc(s.portalUrl || '')}" placeholder="${esc(base)}" data-tu><small>Leave empty to use this page’s link. If you host the menu on your own website, paste its address here.</small></label></div>
         <div><button class="btn sm" data-a="tsave">Save</button></div></div>
-      <div class="qrgrid">${Array.from({ length: n }, (_, i) => { const url = `${base}#table-${i + 1}`; return `<div class="qrcard"><b>Table ${i + 1}</b><div class="qr">${QR.svg(url, { margin: 1, dark: '#3E2A1E', label: `QR code for table ${i + 1}` })}</div><span class="faint" style="font-size:12.5px">Scan to see dishes on your table</span><a class="btn xs ghost" href="#table-${i + 1}">Open as Table ${i + 1}</a></div>`; }).join('')}
-      <div class="qrcard"><b>Takeaway</b><div class="qr">${QR.svg(`${base}#menu`, { margin: 1, dark: '#3E2A1E' })}</div><span class="faint" style="font-size:12.5px">For the counter and the window</span><a class="btn xs ghost" href="#menu">Open menu</a></div></div>`;
+      <div class="qrgrid">${Array.from({ length: n }, (_, i) => { const url = `${base}#table-${i + 1}`; return `<div class="qrcard"><b>Table ${i + 1}</b><div class="qr">${QR.svg(url, { margin: 1, dark: '#3E2A1E', label: `QR code for table ${i + 1}` })}</div><span class="faint" style="font-size:12.5px">Scan to see dishes on your table</span><a class="btn xs ghost" href="${custHref('#table-' + (i + 1))}"${custAttrs}>Open as Table ${i + 1}</a></div>`; }).join('')}
+      <div class="qrcard"><b>Takeaway</b><div class="qr">${QR.svg(`${base}#menu`, { margin: 1, dark: '#3E2A1E' })}</div><span class="faint" style="font-size:12.5px">For the counter and the window</span><a class="btn xs ghost" href="${custHref('#menu')}"${custAttrs}>Open menu</a></div></div>`;
   }
   function qrSheet() {
     const s = S().settings, n = s.tables || 12, base = portalBase();
@@ -677,6 +713,8 @@ const Staff = (() => {
           <small class="faint">Guests pay to this UPI ID from the QR on their bill. Card payments run in test mode until a payment gateway such as Razorpay is connected on your own website.</small></div>
         <div class="box"><h2>Orders</h2><div class="grid2">${f('prefix', 'Order ID prefix', 'maxlength="4" style="text-transform:uppercase"')}${f('tables', 'Tables', 'inputmode="numeric"')}</div>
           <label class="row" style="justify-content:space-between"><span>Serve dishes only in their set hours</span><span class="switch"><input type="checkbox" name="timeMenus" ${s.timeMenus !== false ? 'checked' : ''}></span></label>
+          <label class="row" style="justify-content:space-between"><span>Café rewards (beans) for guests who give a phone number</span><span class="switch"><input type="checkbox" name="loyalty" ${s.loyalty !== false ? 'checked' : ''}></span></label>
+          <div class="grid3">${f('beanPer', '₹ per bean', 'inputmode="numeric"')}${f('redeemBeans', 'Beans to redeem', 'inputmode="numeric"')}${f('redeemValue', '₹ off', 'inputmode="numeric"')}</div>
           <label class="field"><span>Staff PIN</span><input class="in" name="pin" inputmode="numeric" maxlength="4" value="${esc(s.pin || '1234')}"></label></div>
         <div class="box"><h2>Data</h2><p class="muted" style="margin:0">${supa() ? 'Orders, menu and stock live in your Supabase project and sync to every phone and counter in real time.' : S().mode === 'cloud' ? 'Orders, menu and stock are shared live between every device that opens this page while signed in to Claude.' : 'Data is saved in this browser. To share orders between phones and the counter, connect a shared database or open this page inside Claude.'}</p>
           <div class="row wrap"><button type="button" class="btn ghost sm" data-a="sample">${icon('chart', 'sm')}Add sample sales</button>${demo ? `<button type="button" class="btn ghost sm" data-a="unsample">${icon('trash', 'sm')}Remove ${demo} sample sales</button>` : ''}
@@ -686,7 +724,8 @@ const Staff = (() => {
   async function saveSetup() {
     const fm = $('[data-sform]', root); if (!fm) return;
     const v = (n) => (fm.elements[n].type === 'checkbox' ? fm.elements[n].checked : fm.elements[n].value.trim());
-    const patch = { name: v('name'), tagline: v('tagline'), address: v('address'), phone: v('phone'), gstin: v('gstin').toUpperCase(), fssai: v('fssai'), gstRate: +v('gstRate'), sac: v('sac'), taxInclusive: v('taxInclusive'), upiId: v('upiId'), upiName: v('upiName'), prefix: v('prefix').toUpperCase().replace(/[^A-Z]/g, '') || 'KM', tables: Math.max(1, Math.min(99, parseInt(v('tables'), 10) || 12)), timeMenus: v('timeMenus'), pin: v('pin') };
+    const patch = { name: v('name'), tagline: v('tagline'), address: v('address'), phone: v('phone'), gstin: v('gstin').toUpperCase(), fssai: v('fssai'), gstRate: +v('gstRate'), sac: v('sac'), taxInclusive: v('taxInclusive'), upiId: v('upiId'), upiName: v('upiName'), prefix: v('prefix').toUpperCase().replace(/[^A-Z]/g, '') || 'KM', tables: Math.max(1, Math.min(99, parseInt(v('tables'), 10) || 12)), timeMenus: v('timeMenus'), pin: v('pin'),
+      loyalty: v('loyalty'), beanPer: Math.max(1, parseInt(v('beanPer'), 10) || 10), redeemBeans: Math.max(1, parseInt(v('redeemBeans'), 10) || 100), redeemValue: Math.max(1, parseInt(v('redeemValue'), 10) || 50) };
     if (!patch.name) return toast('Enter the café name', 'warn');
     if (!/^\d{4}$/.test(patch.pin)) return toast('The staff PIN needs 4 digits', 'warn');
     if (patch.upiId && !/^[\w.-]{2,}@[a-zA-Z]{2,}$/.test(patch.upiId)) return toast('That UPI ID doesn’t look right, for example yourcafe@okaxis', 'warn');
@@ -786,7 +825,7 @@ const Staff = (() => {
     for (const o of list) {
       if (seen.has(o.id)) continue;
       seen.add(o.id);
-      if (o.status === 'new' && Date.now() - o.createdAt < 5 * 60000 && unlocked && document.body.classList.contains('s-mode') && o.source === 'portal') {
+      if (o.status === 'new' && Date.now() - o.createdAt < 5 * 60000 && unlocked && page !== 'board' && document.body.classList.contains('s-mode') && o.source === 'portal') {
         toast(`New order ${o.id}, ${o.table ? 'Table ' + o.table : 'Takeaway'}, ${D.money(o.total)}`, 'ok', 5000);
         if (soundOn) UI.chime();
       }

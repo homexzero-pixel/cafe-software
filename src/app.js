@@ -23,10 +23,18 @@
       <div class="mode-note">${icon('info', 'sm')}<span>${note}</span></div></div></div>`;
   }
   let current = '';
+  // KM_APP: 'customer' (index.html, guests only), 'cafe' (cafe.html, staff only) or 'both' (demo.html, one link for both)
+  const APP = window.KM_APP || 'both';
   function route() {
     const h = (location.hash || '').slice(1);
     UI.closeAll();
     let m;
+    if (APP === 'customer') {
+      current = 'cust';
+      if ((m = /^table-(\d{1,3})$/.exec(h))) return Cust.show('menu', +m[1]);
+      return Cust.show(['menu', 'cart', 'bills', 'ar'].includes(h) ? h : 'menu');
+    }
+    if (APP === 'cafe') { current = 'staff'; return Staff.show(h.startsWith('staff-') ? h.slice(6) : h || 'overview'); }
     if ((m = /^table-(\d{1,3})$/.exec(h))) { Staff.leave(); current = 'cust'; Cust.show('menu', +m[1]); return; }
     if (['menu', 'cart', 'bills', 'ar'].includes(h)) { Staff.leave(); current = 'cust'; Cust.show(h); return; }
     if (h === 'staff' || h.startsWith('staff-')) { Cust.leave(); current = 'staff'; Staff.show(h === 'staff' ? 'overview' : h.slice(6)); return; }
@@ -37,9 +45,9 @@
     if (pending) return; pending = true;
     requestAnimationFrame(() => {
       pending = false;
-      Staff.watch();
+      if (APP !== 'customer') Staff.watch();
       if (current === 'cust') Cust.onData(); else if (current === 'staff') Staff.onData(); else welcome();
-      if (current !== 'cust') Cust.onData();
+      if (current !== 'cust' && APP !== 'cafe') Cust.onData();
     });
   }
   Data.onWriteError((e) => {
@@ -63,7 +71,7 @@
     route();
     await waitForRuntime(900);
     await Data.init();
-    Cust.primeSeen();
+    if (APP !== 'cafe') Cust.primeSeen();
     if (Viewer.ok()) for (const [k] of Dishes.LIST) Viewer.requestThumb(k);
     route();
   }

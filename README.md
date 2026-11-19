@@ -1,9 +1,27 @@
 # Kaapi & Marble: café software with a 3D table menu
 
-One web page, two apps:
+Two separate apps that share one database, so an order placed by a guest appears on the café dashboard straight away:
 
 - **Customer portal**: guests scan the QR on their table, see the menu, open the camera and swipe through dishes shown in 3D on their own table, order, and pay by UPI, card or at the counter. Bills show each order ID with the GST invoice.
-- **Café manager**: kitchen order board, billing counter, bills, menu editor with 3D preview, recipe-based stock that deducts with every order, GST reports and printable table QR codes. Staff PIN: 1234.
+- **Café dashboard** (`cafe.html`): kitchen order board, pickup screen for a TV, billing counter, bills, menu editor with 3D preview, recipe-based stock that deducts with every order, GST reports and printable table QR codes. Staff PIN: 1234.
+
+The build makes three pages from the same source:
+
+| Page | Who uses it | Opens with |
+|---|---|---|
+| `dist/index.html` | Guests (table QR codes point here) | `#table-3`, `#menu`, `#cart`, `#bills`, `#ar` |
+| `dist/cafe.html` | Staff on the counter tablet, kitchen screen and TV | `#overview`, `#orders`, `#billing`, `#bills`, `#menu`, `#stock`, `#reports`, `#board`, `#tables`, `#setup` |
+| `dist/demo.html` | Trying both in one tab | `#welcome`, `#table-3`, `#staff` |
+
+## Features that chains use
+
+- **Customise your order**: size, milk, extra shot, sweetness, spice and add-ons, each with its own price. Extra ingredients come off stock (a large latte uses more milk). Edit the choices per dish in Menu, or keep the defaults for its category.
+- **Rewards**: guests add a phone number at checkout, earn 1 bean per ₹10 on paid bills and redeem 100 beans for ₹50 off. The discount is applied before GST. Balances are worked out from orders, so they never drift. Rates are in Setup.
+- **Order ahead for pickup**: takeaway guests pick "as soon as ready" or in 15 to 60 minutes; the kitchen ticket shows the pickup time.
+- **Pickup screen** (`cafe.html#board`): a TV view with "Preparing" and "Ready to collect" order numbers, a flash and an optional chime when an order turns ready.
+- **Ready alerts on the guest's phone**: chime, vibration and a message when their order is ready.
+- **Goes well with**: each dish suggests three dishes from other categories, one tap to add.
+- **Kitchen time**: the dashboard shows the average minutes from order to ready today.
 
 ![Menu](docs/screenshots/menu.jpg) ![Table view](docs/screenshots/table-view-photo.jpg)
 
@@ -14,11 +32,11 @@ node build.mjs        # builds dist/index.html
 npx serve dist        # open http://localhost:3000
 ```
 
-Open `#table-3` for the customer view or `#staff` for the café manager.
+Open http://localhost:3000/#table-3 for the customer app and http://localhost:3000/cafe.html for the café dashboard. In one browser they share data through localStorage, so a guest order in one tab rings on the dashboard in the other. To sync different phones and the counter, connect Supabase (below).
 
 ## Put it online
 
-`dist/index.html` is the whole app. Upload it to any static host with HTTPS (Netlify, Vercel, Cloudflare Pages, GitHub Pages). HTTPS is required for the live camera; AR that pins dishes to the table works in Chrome on Android.
+Upload the `dist` folder (`index.html`, `cafe.html`) to any static host with HTTPS (Netlify, Vercel, Cloudflare Pages, GitHub Pages). HTTPS is required for the live camera; AR that pins dishes to the table works in Chrome on Android.
 
 On its own the hosted page saves data in each browser. To share orders between guests' phones and the counter in real time, connect Supabase (below).
 
@@ -69,6 +87,9 @@ In the Razorpay dashboard, add the webhook URL `https://<project>.supabase.co/fu
 - [ ] Cancel an order: its ingredients return to stock.
 - [ ] Use up an ingredient (stock count to 0): dishes that need it show "Sold out".
 - [ ] POS bill with a 10% discount and cash: change is right, invoice prints with GSTIN, FSSAI and SAC.
+- [ ] Customise a cappuccino (Large, oat milk, extra shot): price adds ₹135 and the kitchen ticket lists the choices.
+- [ ] Add a phone number, pay; after staff mark it paid, the beans balance goes up. Redeem 100 beans: ₹50 comes off before GST.
+- [ ] Takeaway in 30 min: the ticket shows the pickup time; mark it ready and the number flashes on `cafe.html#board`.
 - [ ] Two phones order at the same moment: order numbers are consecutive with no duplicates.
 - [ ] Reports: GST summary taxable + CGST + SGST matches the bills; CSV export opens in a spreadsheet.
 
@@ -88,3 +109,4 @@ Claude Code reads `CLAUDE.md` for the architecture, data model, billing rules an
 | ![Order placed](docs/screenshots/order-placed.jpg) | ![Marble table view](docs/screenshots/table-view-marble.jpg) |
 | ![Overview](docs/screenshots/staff-overview.jpg) | ![Kitchen board](docs/screenshots/staff-kitchen.jpg) |
 | ![Billing](docs/screenshots/staff-billing.jpg) | ![GST invoice](docs/screenshots/staff-invoice.jpg) |
+| ![Customise](docs/screenshots/customise.jpg) | ![Pickup screen](docs/screenshots/pickup-screen.jpg) |

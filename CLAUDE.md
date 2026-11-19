@@ -1,6 +1,6 @@
 # Kaapi & Marble: café software
 
-Two apps in one page for an Indian café:
+Two apps for an Indian café, built from one source into separate pages that share storage: `dist/index.html` (customers), `dist/cafe.html` (staff) and `dist/demo.html` (both, used by the e2e tests). `window.KM_APP` ('customer', 'cafe', 'both') picks the routes in `app.js`.
 - **Customer portal** (phones): menu, 3D dishes, a camera "table view" where guests swipe through dishes placed on their table, cart with GST bill, UPI / card / pay-at-counter, and bills with order IDs.
 - **Café manager** (staff, PIN 1234 by default): overview dashboard, kitchen order tickets (KOT), billing (POS), bills, menu editor, recipe-based stock, GST reports, table QR codes, setup.
 
@@ -8,7 +8,7 @@ Plain JavaScript (ES2020), no framework and no runtime dependencies. The build i
 
 ## Commands
 
-- Build: `node build.mjs` (or `python3 build.py`). Output: `dist/index.html`. Rebuild after every change in `src/`.
+- Build: `node build.mjs` (or `python3 build.py`). Output: `dist/index.html`, `dist/cafe.html`, `dist/demo.html`. Rebuild after every change in `src/`.
 - Run locally: `npx serve dist`, then open http://localhost:3000. The live camera needs HTTPS or localhost.
 - Unit tests: `npm test` (geometry winding, GST billing math, stock and availability).
 - QR tests: `npm i && npm run test:qr` (needs `pip install opencv-python`).
@@ -31,16 +31,16 @@ Plain JavaScript (ES2020), no framework and no runtime dependencies. The build i
 | `app.js` | | Boot and hash router |
 | `styles.css`, `template.html` | | Styles and page shell |
 
-Routes (hash): `#welcome`, `#table-N`, `#menu`, `#ar`, `#cart`, `#bills`, `#staff`, `#staff-orders`, `#staff-billing`, `#staff-bills`, `#staff-menu`, `#staff-stock`, `#staff-reports`, `#staff-tables`, `#staff-setup`.
+Routes (hash): customer `#table-N`, `#menu`, `#ar`, `#cart`, `#bills`; café dashboard `#overview`, `#orders`, `#billing`, `#bills`, `#menu`, `#stock`, `#reports`, `#board` (pickup TV), `#tables`, `#setup` (in demo.html they are prefixed `#staff-`, plus `#welcome`).
 
 ## Data model
 
 Document paths: `cafe/settings`, `menu/{id}`, `stock/{id}`, `orders/{id}`, `ledger/{id}`, `meta/counter`.
 
-- **Dish**: `name, category, price` (rupees, before GST), `veg, model, kcal, prep, from, to` ("HH:MM" or empty for all day), `desc, tags, active, sort, recipe: [{ing, qty}]` (per serving, in the ingredient's unit).
+- **Dish**: `name, category, price` (rupees, before GST), `veg, model, kcal, prep, from, to` ("HH:MM" or empty for all day), `desc, tags, active, sort, recipe: [{ing, qty}]` (per serving, in the ingredient's unit), optional `options: [{name, many, choices: [{n, p, r}]}]` (customisation; `p` extra ₹, `r` extra ingredients; without it the category's set in `CATEGORY_OPTIONS` applies, `[]` turns it off).
 - **Ingredient**: `name, unit` (g, ml, pc, slice), `base, baseAt` (counted quantity and when), `reorder, cost` (₹ per unit), `supplier`.
 - **Ledger entry**: `at, ing, type` (purchase, waste, count), `qty` (signed), `cost, note`.
-- **Order**: `id` (KM-1043), `no, inv` (KM/26-27/1043), `createdAt, table, type` (dine-in, takeaway), `source` (portal, pos), `customer, items[]`, money fields `sub, disc, taxable, cgst, sgst, round, total` (integer paise), `rate, incl, status` (new, preparing, ready, served, cancelled), `log[]`, `use` (ingredient consumption snapshot), `pay {method, status, ref, last4, ...}`, `demo` for sample sales.
+- **Order**: `id` (KM-1043), `no, inv` (KM/26-27/1043), `createdAt, table, type` (dine-in, takeaway), `source` (portal, pos), `customer, items[]` (each with `opts` names), optional `phone` (rewards), `beans` (redeemed), `pickupAt`, money fields `sub, disc, taxable, cgst, sgst, round, total` (integer paise), `rate, incl, status` (new, preparing, ready, served, cancelled), `log[]`, `use` (ingredient consumption snapshot), `pay {method, status, ref, last4, ...}`, `demo` for sample sales.
 
 ## Rules that matter
 
@@ -50,6 +50,7 @@ Document paths: `cafe/settings`, `menu/{id}`, `stock/{id}`, `orders/{id}`, `ledg
 - **No automatic service charge.** It must stay voluntary, so the software never adds one.
 - **Invoice numbers** are consecutive per financial year (April to March): `PREFIX/YY-YY/NNNN`.
 - **Stock is derived, not decremented**: stock = `base` (at `baseAt`) + ledger entries after `baseAt` − `use` of non-cancelled orders created at or after `baseAt`. A stock count resets `base` and `baseAt`. This avoids lost updates when several devices order at once.
+- **Rewards are derived too** (`Data.beans`): 1 bean per `beanPer` ₹ of paid, non-cancelled bills, minus `beans` redeemed. Redemption is a discount (`disc`) before GST.
 - **Availability** (`Data.dishStatus`): on the menu, inside serving hours (when `settings.timeMenus` is on), and enough stock for one more portion after what is already in the cart.
 - Escape every data string with `UI.esc()` when building HTML.
 - Copy style: sentence case, plain verbs, no all-caps labels.

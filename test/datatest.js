@@ -35,3 +35,15 @@ const use = D.consumption([{id:'cappuccino', qty:2}], byId); assert(use.beans ==
 const sbi = {}; stock.forEach(s => sbi[s.id] = s);
 console.log('food cost cappuccino paise', D.foodCost(byId['cappuccino'], sbi), 'pizza', D.foodCost(byId['margherita'], sbi));
 const so = D.sampleOrders(menu, D.SETTINGS, 1000, 14); console.log('sample orders', so.length, so[0].id, so[so.length-1].id, new Date(so[so.length-1].createdAt).toString());
+// customisation: options change price and stock use
+const cap = byId['cappuccino'];
+const sel = D.resolveOpts(cap, { 0: [1], 2: [0] });
+assert(sel.add === 85 && sel.opts.join() === 'Large,Extra shot', 'large + extra shot adds ₹85');
+const use2 = D.consumption([{ id: 'cappuccino', qty: 2, xr: sel.r }], byId); assert(use2.milk === 420 && use2.beans === 54, 'option ingredients come off stock');
+assert(JSON.stringify(D.optionsFromText(D.optionsToText(D.optionGroups(cap)))) === JSON.stringify(D.optionGroups(cap)), 'options text round-trip');
+assert(D.optionGroups(Object.assign({}, cap, { options: [] })).length === 0, 'a dish can switch options off');
+// rewards: earned on paid bills, spent on redemption, cancelled orders ignored
+const ro = [{ phone: '9876543210', status: 'served', total: 120000, pay: { status: 'paid' } }, { phone: '9876543210', status: 'new', total: 50000, pay: { status: 'unpaid' } },
+  { phone: '9876543210', status: 'served', total: 30000, beans: 100, pay: { status: 'paid' } }, { phone: '9876543210', status: 'cancelled', total: 90000, pay: { status: 'paid' } }];
+const bn = D.beans('+91 98765 43210', ro, D.SETTINGS); assert(bn.earned === 150 && bn.spent === 100 && bn.balance === 50 && bn.pending === 50, 'beans balance');
+const rb = D.bill([{ price: 180, qty: 2 }], { disc: 5000 }); assert(rb.taxable === 31000 && rb.cgst === 775 && rb.total === 32600, 'rewards discount applied before GST');
