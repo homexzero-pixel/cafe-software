@@ -11,6 +11,9 @@ const Data = (() => {
     prefix: 'KM', tables: 12, pin: '1234', portalUrl: '', timeMenus: true,
     // rewards: 1 bean per ₹beanPer of paid bills; redeemBeans beans = ₹redeemValue off (a discount before GST)
     loyalty: true, beanPer: 10, redeemBeans: 100, redeemValue: 50,
+    // customer app switches, controlled from the café dashboard (Customer app page)
+    orderingOpen: true, dineIn: true, takeaway: true, payUpi: true, payCard: true, payCounter: true,
+    pickupAhead: true, customise: true, pairings: true, arView: true, notice: '',
   };
   const CATEGORIES = ['Coffee', 'Tea & coolers', 'Bakery', 'Breakfast', 'Mains', 'Snacks', 'Desserts'];
   // [id, name, category, price, veg, model, kcal, prep, from, to, desc, recipe, tags]
@@ -125,6 +128,23 @@ const Data = (() => {
       else if (p.status !== 'refunded') pending += Math.floor((o.total || 0) / per);
     }
     return { earned, spent, pending, balance: Math.max(0, earned - spent) };
+  }
+
+  /* Payments: a bill is paid by one method, or split ({ method: 'split', parts: [{ m, a }] }, a in paise) */
+  function payParts(o) {
+    const p = (o && o.pay) || {};
+    if (p.method === 'split' && Array.isArray(p.parts)) return p.parts.map((x) => ({ m: x.m, a: Math.round(Number(x.a) || 0) }));
+    return p.method ? [{ m: p.method, a: o.total || 0 }] : [];
+  }
+  // share payment parts across several bills (settling a table): fills each bill in order, method by method
+  function allocate(parts, amounts) {
+    const left = parts.map((x) => ({ m: x.m, a: x.a })), out = [];
+    for (const amt of amounts) {
+      let need = amt; const mine = [];
+      for (const x of left) { if (need <= 0) break; const take = Math.min(x.a, need); if (take > 0) { mine.push({ m: x.m, a: take }); x.a -= take; need -= take; } }
+      out.push(mine);
+    }
+    return out;
   }
 
   function defaultMenu() {
@@ -514,7 +534,7 @@ const Data = (() => {
 
   return {
     SETTINGS, CATEGORIES, defaultMenu, defaultStock, money, rupees, compact, NUM, toMin, pad2, fy, dayKey, startOfDay, time12, dateShort, dateLong, hm,
-    bill, computeStock, consumption, dishStatus, optionGroups, resolveOpts, optionsToText, optionsFromText, CATEGORY_OPTIONS, beans, cleanPhone, inWindow, foodCost, rid, orderIds, sampleOrders,
+    bill, computeStock, consumption, dishStatus, optionGroups, resolveOpts, payParts, allocate, optionsToText, optionsFromText, CATEGORY_OPTIONS, beans, cleanPhone, inWindow, foodCost, rid, orderIds, sampleOrders,
     state, on, notify, init, api, derived, safeLS, onWriteError: (fn) => { writeErrorHandler = fn; },
   };
 })();

@@ -7,13 +7,13 @@ const Staff = (() => {
   const C = { upi: '#8B5A3C', card: '#D59A55', cash: '#4E8A5B', bar: '#8B5A3C' };
   let root = null, page = 'overview', unlocked = false, sideOpen = false, soundOn = false, ticker = 0, pinBuf = '';
   const seen = new Set(); let primed = false;
-  const pos = { lines: [], type: 'dine-in', table: '', disc: '', discMode: 'pct', cat: 'All', q: '', ref: null };
+  const pos = { lines: [], type: 'dine-in', table: '', disc: '', discMode: 'pct', cat: 'All', q: '', ref: null, phone: '', redeem: false };
   const bf = { range: 'today', status: 'all', q: '' }, mf = { q: '', cat: 'All' }, sf = { tab: 'items', q: '' }, rf = { range: '7d' }, kf = { type: 'all' };
   try { unlocked = sessionStorage.getItem('km.staff') === '1'; } catch (e) { unlocked = false; }
 
   const PAGES = [
     ['overview', 'home', 'Overview'], ['orders', 'bell', 'Orders'], ['billing', 'register', 'Billing'], ['bills', 'receipt', 'Bills'],
-    ['menu', 'utensils', 'Menu'], ['stock', 'box', 'Stock'], ['reports', 'chart', 'Reports'], ['board', 'tv', 'Pickup screen'], ['tables', 'qr', 'Tables & QR'], ['setup', 'sliders', 'Setup'],
+    ['menu', 'utensils', 'Menu'], ['stock', 'box', 'Stock'], ['reports', 'chart', 'Reports'], ['board', 'tv', 'Pickup screen'], ['app', 'bag', 'Customer app'], ['tables', 'qr', 'Tables & QR'], ['setup', 'sliders', 'Setup'],
   ];
   const SPLIT = window.KM_APP === 'cafe';
   // in the standalone dashboard (cafe.html) routes are #overview, #orders...; in the combined demo they are #staff, #staff-orders...
@@ -84,7 +84,7 @@ const Staff = (() => {
     if (!unlocked) return lockScreen();
     const y = window.scrollY;
     if (page === 'board') { root.innerHTML = board(); return; }
-    const body = { overview: overview, orders: orders, billing: billing, bills: bills, menu: menuPage, stock: stockPage, reports: reports, tables: tables, setup: setup }[page] || overview;
+    const body = { app: appControls, overview: overview, orders: orders, billing: billing, bills: bills, menu: menuPage, stock: stockPage, reports: reports, tables: tables, setup: setup }[page] || overview;
     root.innerHTML = `<div class="staff">
       <div class="mtop"><button class="btn icon sm quiet" data-a="side" aria-label="Open navigation" style="background:rgba(255,255,255,.1);color:#fff">${icon('menu')}</button><span class="plate">${esc(S().settings.name)}</span></div>
       ${side()}<main class="main" id="smain">${S().ready ? body() : `<div class="empty">${icon('clock')}<h2>Loading café data</h2></div>`}</main></div>`;
@@ -183,7 +183,7 @@ const Staff = (() => {
     const top = {}; for (const o of today) for (const l of o.items || []) top[l.name] = (top[l.name] || 0) + l.qty;
     const topRows = Object.entries(top).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([l, v]) => ({ l, v }));
     const paid = today.filter((o) => o.pay && o.pay.status === 'paid');
-    const pay = ['upi', 'card', 'cash'].map((k) => ({ l: { upi: 'UPI', card: 'Card', cash: 'Cash' }[k], c: C[k], v: sumBy(paid.filter((o) => o.pay.method === k), (o) => o.total) }));
+    const pay = ['upi', 'card', 'cash'].map((k) => ({ l: { upi: 'UPI', card: 'Card', cash: 'Cash' }[k], c: C[k], v: paid.reduce((a, o) => a + D.payParts(o).filter((p) => p.m === k).reduce((x, p) => x + p.a, 0), 0) }));
     const attn = [];
     for (const o of up.slice(0, 5)) attn.push(`<button data-bill="${esc(o.id)}"><span class="ico ${o.pay.status === 'pending' ? 'warn' : 'info'}">${icon(o.pay.status === 'pending' ? 'upi' : 'receipt')}</span><span><span class="t">${esc(o.id)} ${o.pay.status === 'pending' ? 'UPI to confirm' : 'not paid'}</span><br><span class="s">${o.table ? 'Table ' + o.table : 'Takeaway'}, ${D.money(o.total)}, ${UI.ago(o.createdAt)} ago</span></span></button>`);
     for (const s of stockIssues().slice(0, 6)) attn.push(`<a href="${href('stock')}"><span class="ico ${s.state === 'out' ? 'bad' : 'warn'}">${icon('box')}</span><span><span class="t">${esc(s.name)} ${s.state === 'out' ? 'out of stock' : 'running low'}</span><br><span class="s">${fmtQty(Math.max(0, s.qty), s.unit)} left, reorder at ${fmtQty(s.reorder, s.unit)}</span></span></a>`);
@@ -249,18 +249,27 @@ const Staff = (() => {
   }
 
   /* ---------------- billing (POS) ---------------- */
+  const PM = { cash: 'Cash', upi: 'UPI', card: 'Card', split: 'Split', counter: 'Counter' };
+  const posTiles = () => { const ql = pos.q.trim().toLowerCase(); return S().menu.filter((d) => (pos.cat === 'All' || d.category === pos.cat) && (!ql || d.name.toLowerCase().includes(ql))); };
+  // unpaid dine-in bills from today, grouped by table: the running tab
+  const openTabs = () => {
+    const sod = D.startOfDay(), tabs = {};
+    for (const o of unpaidOrders()) { if (o.type !== 'dine-in' || !o.table || o.createdAt < sod) continue; (tabs[o.table] = tabs[o.table] || []).push(o); }
+    return tabs;
+  };
   function billing() {
     const cats = ['All', ...new Set(S().menu.map((d) => d.category))];
-    const ql = pos.q.trim().toLowerCase();
-    const tiles = S().menu.filter((d) => (pos.cat === 'All' || d.category === pos.cat) && (!ql || d.name.toLowerCase().includes(ql)));
-    const waiting = unpaidOrders();
-    return head('Billing', 'Tap dishes to add them. Customer portal orders waiting for payment are listed first.') +
-      (waiting.length ? `<div class="box" style="margin-bottom:14px"><h2>${icon('receipt')}Waiting for payment <span class="faint">${waiting.length} bill${waiting.length > 1 ? 's' : ''}</span></h2>
-        <div class="row wrap">${waiting.map((o) => `<button class="btn ${o.pay.status === 'pending' ? 'saffron' : 'ghost'} sm" data-collect="${esc(o.id)}">${esc(o.id)}, ${o.table ? 'T' + o.table : 'TA'}, ${D.money(o.total)}${o.pay.status === 'pending' ? ', UPI sent' : ''}</button>`).join('')}</div></div>` : '') +
+    const waiting = unpaidOrders(), tabs = openTabs();
+    const multi = Object.entries(tabs).filter(([, l]) => l.length > 1);
+    const inTab = new Set(multi.flatMap(([, l]) => l.map((o) => o.id)));
+    return head('Billing', 'Tap a dish to add it, or type and press Enter. Press / to search.', `<button class="btn ghost" data-a="zreport">${icon('cash')}Close the day</button>`) +
+      (waiting.length ? `<div class="box" style="margin-bottom:14px"><h2>${icon('receipt')}Waiting for payment <span class="faint">${waiting.length} bill${waiting.length > 1 ? 's' : ''}, ${D.money(sumBy(waiting, (o) => o.total))}</span></h2>
+        <div class="row wrap">${multi.map(([t, l]) => `<button class="btn saffron sm" data-psettle="${t}">${icon('dine', 'sm')}Table ${t}: ${l.length} bills, ${D.money(sumBy(l, (o) => o.total))}. Settle</button>`).join('')}
+        ${waiting.filter((o) => !inTab.has(o.id)).map((o) => `<button class="btn ${o.pay.status === 'pending' ? 'saffron' : 'ghost'} sm" data-collect="${esc(o.id)}">${esc(o.id)}, ${o.table ? 'T' + o.table : 'TA'}, ${D.money(o.total)}${o.pay.status === 'pending' ? ', UPI sent' : ''}</button>`).join('')}</div></div>` : '') +
       `<div class="pos"><div>
-        <div class="toolbar"><label class="search">${icon('search')}<input type="search" placeholder="Search dishes" value="${esc(pos.q)}" data-pq aria-label="Search dishes"></label>
+        <div class="toolbar"><label class="search">${icon('search')}<input type="search" placeholder="Search dishes, Enter to add" value="${esc(pos.q)}" data-pq aria-label="Search dishes" aria-keyshortcuts="/"></label>
         <div class="pills">${cats.map((c) => `<button class="pill" data-pc="${esc(c)}" aria-pressed="${pos.cat === c}">${esc(c)}</button>`).join('')}</div></div>
-        <div class="tiles" data-tiles>${tilesHtml(tiles)}</div></div>
+        <div class="tiles" data-tiles>${tilesHtml(posTiles())}</div></div>
         <aside class="box ticket" aria-label="Current bill" data-ticket>${ticketHtml()}</aside></div>`;
   }
   function tilesHtml(tiles) {
@@ -270,40 +279,86 @@ const Staff = (() => {
         <span class="nm">${vmark(d.veg)}<span>${esc(d.name)}</span></span><span class="pr">${D.rupees(d.price)}</span>${s.ok ? (s.low ? `<span class="why" style="color:var(--warn)">${s.portions} left</span>` : '') : `<span class="why">${esc(s.short || s.label)}</span>`}</button>`;
     }).join('') || '<p class="muted">No dishes match.</p>';
   }
-  const posLines = () => pos.lines.map((l) => { const d = X().menuById[l.id]; return d ? Object.assign({}, l, { name: d.name, price: d.price, veg: d.veg, model: d.model }) : null; }).filter(Boolean);
-  const posBill = () => D.bill(posLines(), { rate: S().settings.gstRate, incl: S().settings.taxInclusive, discPct: pos.discMode === 'pct' ? +pos.disc || 0 : 0, disc: pos.discMode === 'amt' ? Math.round((+pos.disc || 0) * 100) : 0 });
+  const posLines = () => pos.lines.map((l) => { const d = X().menuById[l.id]; return d ? Object.assign({}, l, { name: d.name, price: d.price + (Number(l.add) || 0), veg: d.veg, model: d.model }) : null; }).filter(Boolean);
+  const posRewards = () => { const st = S().settings, ph = D.cleanPhone(pos.phone); if (st.loyalty === false || !ph) return null; return Object.assign({ phone: ph }, D.beans(ph, S().orders, st)); };
+  const posRedeem = () => {
+    const st = S().settings, rw = posRewards(); if (!rw || !pos.redeem) return 0;
+    const need = Number(st.redeemBeans) || 100, val = Math.round((Number(st.redeemValue) || 50) * 100);
+    const sub = posLines().reduce((a, l) => a + Math.round(l.price * 100) * l.qty, 0);
+    return rw.balance >= need && sub > val ? val : 0;
+  };
+  const posBill = () => {
+    const extra = pos.discMode === 'amt' ? Math.round((+pos.disc || 0) * 100) : 0, sub = posLines().reduce((a, l) => a + Math.round(l.price * 100) * l.qty, 0);
+    const pct = pos.discMode === 'pct' ? Math.min(100, Math.max(0, +pos.disc || 0)) : 0;
+    return D.bill(posLines(), { rate: S().settings.gstRate, incl: S().settings.taxInclusive, disc: Math.round((sub * pct) / 100) + extra + posRedeem() });
+  };
   function ticketHtml() {
-    const lines = posLines(), b = posBill(), n = S().settings.tables || 12;
+    const lines = posLines(), b = posBill(), n = S().settings.tables || 12, st = S().settings;
+    const tab = pos.type === 'dine-in' && pos.table ? openTabs()[+pos.table] || [] : [];
+    const rw = posRewards(), need = Number(st.redeemBeans) || 100;
     return `<div class="row" style="margin-bottom:10px"><h2 style="margin:0">Current bill</h2><span class="grow"></span>${lines.length ? `<button class="btn xs ghost" data-a="pclear">Clear</button>` : ''}</div>
       <div class="row wrap" style="margin-bottom:8px"><div class="seg">${[['dine-in', 'Dine-in'], ['takeaway', 'Takeaway']].map(([k, l]) => `<button data-pt="${k}" aria-pressed="${pos.type === k}">${l}</button>`).join('')}</div>
       ${pos.type === 'dine-in' ? `<select class="in" data-ptable style="width:auto;min-height:36px" aria-label="Table"><option value="">Table</option>${Array.from({ length: n }, (_, i) => `<option ${+pos.table === i + 1 ? 'selected' : ''}>${i + 1}</option>`).join('')}</select>` : ''}</div>
-      <div class="lines">${lines.length ? lines.map((l, i) => `<div class="tline"><div><div class="nm">${esc(l.name)}</div><div class="sm money">${D.rupees(l.price)}</div></div>
+      ${tab.length ? `<div class="tabnote">${icon('receipt', 'sm')}<span class="grow">Table ${esc(pos.table)} has ${tab.length} unpaid bill${tab.length > 1 ? 's' : ''}, ${D.money(sumBy(tab, (o) => o.total))}</span><button class="btn xs" data-psettle="${esc(pos.table)}">Settle table</button></div>` : ''}
+      <div class="lines">${lines.length ? lines.map((l, i) => `<div class="tline"><div><div class="nm">${esc(l.name)}</div>${(l.opts || []).length ? `<div class="sm opts">${esc(l.opts.join(', '))}</div>` : ''}${l.note ? `<div class="sm" style="color:var(--warn)">${esc(l.note)}</div>` : ''}
+        <div class="sm money">${D.rupees(l.price)} <button class="linkbtn" data-pedit="${i}">${D.optionGroups(X().menuById[l.id]).length ? 'Customise' : 'Note'}</button></div></div>
         <div class="mini-step"><button data-pdec="${i}" aria-label="One less">${icon('minus', 'sm')}</button><span>${l.qty}</span><button data-pinc="${i}" aria-label="One more">${icon('plus', 'sm')}</button></div><span class="amt">${D.money(Math.round(l.price * 100) * l.qty)}</span></div>`).join('') : '<p class="muted" style="margin:14px 0">Tap a dish to start a bill.</p>'}</div>
-      <div class="row" style="margin:12px 0 8px"><label class="field grow"><span>Discount</span><input class="in" inputmode="decimal" placeholder="0" value="${esc(pos.disc)}" data-pdisc></label>
-        <div class="seg" style="align-self:flex-end;margin-bottom:3px"><button data-pdm="pct" aria-pressed="${pos.discMode === 'pct'}">%</button><button data-pdm="amt" aria-pressed="${pos.discMode === 'amt'}">₹</button></div></div>
+      <div class="row" style="margin:12px 0 8px;align-items:flex-end"><label class="field grow"><span>Discount</span><input class="in" inputmode="decimal" placeholder="0" value="${esc(pos.disc)}" data-pdisc></label>
+        <div class="seg" style="margin-bottom:3px"><button data-pdm="pct" aria-pressed="${pos.discMode === 'pct'}">%</button><button data-pdm="amt" aria-pressed="${pos.discMode === 'amt'}">₹</button></div>
+        ${st.loyalty !== false ? `<label class="field" style="width:46%"><span>Rewards phone</span><input class="in" inputmode="tel" maxlength="14" placeholder="Optional" value="${esc(pos.phone)}" data-pphone></label>` : ''}</div>
+      <div data-prw>${rewardsLine(rw, need)}</div>
       <table class="sumtbl" data-ptot>${totRows(b)}</table>
-      <div class="paybtns" style="margin-top:12px">
-        <button class="btn" data-pay="cash" ${lines.length ? '' : 'disabled'}>${icon('cash')}Cash</button>
+      <div class="paybtns four" style="margin-top:12px">
+        <button class="btn" data-pay="cash" ${lines.length ? '' : 'disabled'} title="Cash">${icon('cash')}Cash</button>
         <button class="btn" data-pay="upi" ${lines.length ? '' : 'disabled'}>${icon('upi')}UPI</button>
-        <button class="btn" data-pay="card" ${lines.length ? '' : 'disabled'}>${icon('card')}Card</button></div>`;
+        <button class="btn" data-pay="card" ${lines.length ? '' : 'disabled'}>${icon('card')}Card</button>
+        <button class="btn" data-pay="split" ${lines.length ? '' : 'disabled'}>${icon('sliders')}Split</button></div>
+      ${pos.type === 'dine-in' ? `<button class="btn ghost block" style="margin-top:8px" data-a="pkot" ${lines.length ? '' : 'disabled'}>${icon('bell')}Send to kitchen, pay later</button>` : ''}`;
   }
-  const totRows = (b) => `<tbody><tr class="sub"><td>Item total</td><td>${D.money(b.sub, true)}</td></tr>${b.disc ? `<tr class="sub"><td>Discount</td><td>−${D.money(b.disc, true)}</td></tr>` : ''}
+  const rewardsLine = (rw, need) => (!rw ? '' : `<div class="row" style="gap:8px;font-size:13.5px;margin-bottom:6px">${icon('star', 'sm')}<span class="grow">${rw.balance} bean${rw.balance === 1 ? '' : 's'}${rw.pending ? `, ${rw.pending} pending` : ''}</span>${rw.balance >= need ? `<label class="row" style="gap:6px"><span class="switch"><input type="checkbox" data-predeem ${pos.redeem ? 'checked' : ''}></span>Use ${need} for ₹${S().settings.redeemValue || 50} off</label>` : ''}</div>`);
+  const totRows = (b) => `<tbody><tr class="sub"><td>Item total</td><td>${D.money(b.sub, true)}</td></tr>${b.disc ? `<tr class="sub"><td>Discount${posRedeem() ? ' and rewards' : ''}</td><td>−${D.money(b.disc, true)}</td></tr>` : ''}
     <tr class="sub"><td>CGST ${b.rate / 2}%</td><td>${D.money(b.cgst, true)}</td></tr><tr class="sub"><td>SGST ${b.rate / 2}%</td><td>${D.money(b.sgst, true)}</td></tr>${b.round ? `<tr class="sub"><td>Round off</td><td>${b.round > 0 ? '+' : '−'}${D.money(Math.abs(b.round), true)}</td></tr>` : ''}
     <tr class="total"><td>Total</td><td>${D.money(b.total)}</td></tr></tbody>`;
   function refreshTicket() { const t = $('[data-ticket]', root); if (t) t.innerHTML = ticketHtml(); refreshTiles(); }
-  function refreshTiles() { const t = $('[data-tiles]', root); if (!t) return; const ql = pos.q.trim().toLowerCase(); t.innerHTML = tilesHtml(S().menu.filter((d) => (pos.cat === 'All' || d.category === pos.cat) && (!ql || d.name.toLowerCase().includes(ql)))); }
-  function posAdd(id) {
-    const d = X().menuById[id]; if (!d) return;
-    const s = status(d); if (!s.ok) { toast(`${d.name}: ${s.label}`, 'warn'); return; }
-    const reserve = {}; for (const l of pos.lines) { const dd = X().menuById[l.id]; for (const r of (dd && dd.recipe) || []) reserve[r.ing] = (reserve[r.ing] || 0) + r.qty * l.qty; }
-    if (!D.dishStatus(d, X().stockMap, S().settings, new Date(), reserve).ok) { toast(`Not enough stock for another ${d.name}`, 'warn'); return; }
-    const l = pos.lines.find((x) => x.id === id); if (l) l.qty++; else pos.lines.push({ id, qty: 1, note: '' });
-    refreshTicket();
+  function refreshTotals() { const tb = $('[data-ptot]', root); if (tb) tb.innerHTML = totRows(posBill()); const r = $('[data-prw]', root); if (r) r.innerHTML = rewardsLine(posRewards(), Number(S().settings.redeemBeans) || 100); }
+  function refreshTiles() { const t = $('[data-tiles]', root); if (t) t.innerHTML = tilesHtml(posTiles()); }
+  function posReserve(skip) { const r = {}; pos.lines.forEach((l, i) => { if (i === skip) return; const dd = X().menuById[l.id]; for (const x of (dd && dd.recipe) || []) r[x.ing] = (r[x.ing] || 0) + x.qty * l.qty; for (const k in l.xr || {}) r[k] = (r[k] || 0) + l.xr[k] * l.qty; }); return r; }
+  // tap adds the standard version; "+" on a line repeats that line with its choices
+  function posAdd(id, line) {
+    const d = X().menuById[id]; if (!d) return false;
+    const s = status(d); if (!s.ok) { toast(`${d.name}: ${s.label}`, 'warn'); return false; }
+    if (!D.dishStatus(d, X().stockMap, S().settings, new Date(), posReserve()).ok) { toast(`Not enough stock for another ${d.name}`, 'warn'); return false; }
+    const l = line || pos.lines.find((x) => x.id === id && !(x.opts || []).length && !x.note);
+    if (l) l.qty++; else pos.lines.push({ id, qty: 1, note: '', opts: [], add: 0, xr: {} });
+    refreshTicket(); return true;
   }
-  // payment dialog used for new POS bills and for collecting existing orders
+  function lineEditor(i) {
+    const l = pos.lines[i]; const d = l && X().menuById[l.id]; if (!d) return;
+    const groups = D.optionGroups(d), picks = {};
+    groups.forEach((g, gi) => { const idx = g.choices.map((c, ci) => ((l.opts || []).includes(c.n) ? ci : -1)).filter((x) => x >= 0); picks[gi] = g.many ? idx : [idx[0] || 0]; });
+    const m = modal({ title: d.name, body: '<div data-le></div>', actions: [{ label: 'Cancel' }, { label: 'Save', cls: 'saffron', onClick: (mm) => {
+      const sel = D.resolveOpts(d, picks), note = $('[data-lenote]', mm.el).value.trim();
+      const before = { opts: l.opts, add: l.add, xr: l.xr, note: l.note };
+      Object.assign(l, { opts: sel.opts, add: sel.add, xr: sel.r, note });
+      if (!D.dishStatus(d, X().stockMap, S().settings, new Date(), posReserve(i)).ok && Object.keys(sel.r).length) { Object.assign(l, before); toast('Not enough stock for those add-ons', 'warn'); return false; }
+      refreshTicket();
+    } }] });
+    const draw = () => {
+      const sel = D.resolveOpts(d, picks), note = ($('[data-lenote]', m.el) || {}).value;
+      $('[data-le]', m.el).innerHTML = `${groups.map((g, gi) => `<div class="optgroup"><div class="og-h"><b>${esc(g.name)}</b><span class="faint">${g.many ? 'Choose any' : 'Choose one'}</span></div>
+        <div class="og-c">${g.choices.map((c, ci) => `<button class="optc" data-og="${gi}" data-oc="${ci}" role="${g.many ? 'checkbox' : 'radio'}" aria-checked="${picks[gi].includes(ci)}">${esc(c.n)}${c.p ? `<span>+${D.rupees(c.p)}</span>` : ''}</button>`).join('')}</div></div>`).join('')}
+        <label class="field"><span>Note for the kitchen</span><input class="in" maxlength="80" data-lenote value="${esc(note == null ? l.note || '' : note)}" placeholder="Less sugar, no onion"></label>
+        <p class="muted" style="margin:10px 0 0">${D.rupees(d.price + sel.add)} each</p>`;
+    };
+    draw();
+    m.el.addEventListener('click', (e) => { const oc = e.target.closest('[data-oc]'); if (!oc) return; const gi = +oc.dataset.og, ci = +oc.dataset.oc; if (groups[gi].many) picks[gi] = picks[gi].includes(ci) ? picks[gi].filter((x) => x !== ci) : picks[gi].concat(ci); else picks[gi] = [ci]; draw(); });
+  }
+
+  // payment dialog for new POS bills, for collecting portal orders and for settling a table
   function payDialog(method, amount, ref, onDone) {
     const s = S().settings;
     let body = '';
+    const upiBox = (amt) => { const link = `upi://pay?pa=${encodeURIComponent((s.upiId || '').toLowerCase()).replace('%40', '@')}&pn=${encodeURIComponent(s.upiName || s.name)}&am=${(amt / 100).toFixed(2)}&cu=INR&tn=${encodeURIComponent('Bill ' + ref)}&tr=${encodeURIComponent(ref)}`; return `<div class="upi-box"><div class="qr">${QR.svg(link, { margin: 1, dark: '#3E2A1E' })}</div><b>Customer scans to pay ${D.money(amt)}</b><span class="muted">UPI ID ${esc(s.upiId)}, reference ${esc(ref)}</span></div>`; };
     if (method === 'cash') {
       const sugg = [amount, Math.ceil(amount / 10000) * 10000, Math.ceil(amount / 50000) * 50000, 200000].filter((v, i, a) => v >= amount && a.indexOf(v) === i).slice(0, 4);
       body = `<div style="font-size:30px;font-weight:700" class="money">${D.money(amount)}</div>
@@ -311,22 +366,33 @@ const Staff = (() => {
         <div class="row wrap" style="margin-top:8px">${sugg.map((v) => `<button class="btn quiet sm" data-quick="${v}">${D.money(v)}</button>`).join('')}</div>
         <div style="margin-top:12px;font-size:16px">Change to return <b class="money" data-change>₹0</b></div>`;
     } else if (method === 'upi') {
-      const link = `upi://pay?pa=${encodeURIComponent((s.upiId || '').toLowerCase()).replace('%40', '@')}&pn=${encodeURIComponent(s.upiName || s.name)}&am=${(amount / 100).toFixed(2)}&cu=INR&tn=${encodeURIComponent('Bill ' + ref)}&tr=${encodeURIComponent(ref)}`;
-      body = `<div class="upi-box"><div class="qr">${QR.svg(link, { margin: 1, dark: '#3E2A1E' })}</div><b>Customer scans to pay ${D.money(amount)}</b><span class="muted">UPI ID ${esc(s.upiId)}, reference ${esc(ref)}</span></div>
-        <div class="testnote" style="margin-top:10px">${icon('info', 'sm')}<span>Confirm only after the payment shows in your UPI app or soundbox.</span></div>
+      body = `${upiBox(amount)}<div class="testnote" style="margin-top:10px">${icon('info', 'sm')}<span>Confirm only after the payment shows in your UPI app or soundbox.</span></div>
         <label class="field" style="margin-top:10px"><span>UPI reference (optional)</span><input class="in" data-uref placeholder="12-digit UTR"></label>`;
+    } else if (method === 'split') {
+      body = `<div style="font-size:30px;font-weight:700" class="money">${D.money(amount)}</div><p class="muted" style="margin:4px 0 12px">Enter what the guest pays each way. The last box fills itself.</p>
+        <div class="grid3">${['cash', 'upi', 'card'].map((k) => `<label class="field"><span>${PM[k]}</span><input class="in" inputmode="decimal" data-sp="${k}" value="${k === 'upi' ? (amount / 100).toFixed(0) : ''}" placeholder="0"></label>`).join('')}</div>
+        <div style="margin-top:10px;font-size:15px" data-spleft></div>
+        <label class="field" style="margin-top:10px"><span>UPI reference or card last 4 (optional)</span><input class="in" data-uref></label>`;
     } else {
       body = `<div style="font-size:30px;font-weight:700" class="money">${D.money(amount)}</div><p class="muted">Take the payment on your card terminal, then record it here.</p>
         <label class="field"><span>Last 4 digits of the card (optional)</span><input class="in" inputmode="numeric" maxlength="4" data-l4></label>`;
     }
+    const spVals = (el) => Object.fromEntries(['cash', 'upi', 'card'].map((k) => [k, Math.round((parseFloat($(`[data-sp=${k}]`, el).value) || 0) * 100)]));
     const m = modal({
-      title: { cash: 'Cash payment', upi: 'UPI payment', card: 'Card payment' }[method], body,
+      title: { cash: 'Cash payment', upi: 'UPI payment', card: 'Card payment', split: 'Split payment' }[method], body,
       actions: [{ label: 'Back' }, {
         label: method === 'cash' ? 'Complete sale' : 'Payment received', cls: 'saffron', onClick: (mm) => {
           const pay = { method, status: 'paid', at: Date.now(), by: 'staff' };
           if (method === 'cash') { const recv = Math.round((parseFloat($('[data-recv]', mm.el).value) || 0) * 100); if (recv < amount) { toast('Cash received is less than the total', 'warn'); return false; } pay.received = recv; pay.change = recv - amount; }
           if (method === 'upi') pay.ref = ($('[data-uref]', mm.el).value || '').trim() || ref;
           if (method === 'card') { pay.last4 = ($('[data-l4]', mm.el).value || '').replace(/\D/g, '').slice(-4); pay.ref = 'POS'; }
+          if (method === 'split') {
+            const v = spVals(mm.el), sum = v.cash + v.upi + v.card;
+            if (sum !== amount) { toast(`The parts add up to ${D.money(sum, true)}, not ${D.money(amount, true)}`, 'warn'); return false; }
+            pay.parts = Object.entries(v).filter(([, a]) => a > 0).map(([k, a]) => ({ m: k, a }));
+            if (pay.parts.length === 1) { pay.method = pay.parts[0].m; delete pay.parts; }
+            pay.ref = ($('[data-uref]', mm.el).value || '').trim() || ref;
+          }
           onDone(pay);
         },
       }],
@@ -337,23 +403,75 @@ const Staff = (() => {
       inp.oninput = upd; upd();
       m.el.addEventListener('click', (e) => { const q = e.target.closest('[data-quick]'); if (q) { inp.value = (+q.dataset.quick / 100).toFixed(0); upd(); } });
     }
+    if (method === 'split') {
+      const order = [];
+      const upd = (src) => {
+        if (src) { const k = src.dataset.sp; order.splice(order.indexOf(k) >>> 0, order.includes(k) ? 1 : 0); order.push(k); }
+        // the box typed in longest ago takes up the difference
+        const v = spVals(m.el), auto = ['cash', 'upi', 'card'].find((k) => !order.includes(k)) || order[0];
+        if (src && auto !== src.dataset.sp) { const rest = amount - Object.entries(v).filter(([k]) => k !== auto).reduce((a, [, x]) => a + x, 0); $(`[data-sp=${auto}]`, m.el).value = rest > 0 ? (rest / 100).toFixed(rest % 100 ? 2 : 0) : ''; }
+        const w = spVals(m.el), left = amount - (w.cash + w.upi + w.card);
+        $('[data-spleft]', m.el).innerHTML = left === 0 ? `${icon('check', 'sm')} Adds up to ${D.money(amount)}` : left > 0 ? `Still to pay <b class="money">${D.money(left, true)}</b>` : `<span style="color:var(--danger)">Over by ${D.money(-left, true)}</span>`;
+      };
+      m.el.addEventListener('input', (e) => { if (e.target.dataset.sp) upd(e.target); });
+      upd();
+    }
+  }
+  function newOrderFromTicket(pay) {
+    const lines = posLines(), b = posBill();
+    return D.api.nextNo().then(async (no) => {
+      const now = Date.now(), ids = D.orderIds(no, S().settings.prefix || 'KM', now);
+      const order = Object.assign({ id: ids.id, no, inv: ids.inv, createdAt: now, table: pos.type === 'dine-in' ? +pos.table : null, type: pos.type, source: 'pos', customer: null,
+        items: lines.map((l) => ({ id: l.id, name: l.name, price: l.price, qty: l.qty, note: l.note || '', veg: l.veg, model: l.model, opts: l.opts || [] })), status: 'new', log: [{ s: 'new', at: now }],
+        use: D.consumption(lines, X().menuById), pay, note: '' }, b);
+      const ph = D.cleanPhone(pos.phone); if (ph && S().settings.loyalty !== false) { order.phone = ph; if (posRedeem()) order.beans = Number(S().settings.redeemBeans) || 100; }
+      await D.api.putOrder(order);
+      Object.assign(pos, { lines: [], disc: '', phone: '', redeem: false });
+      if (pos.type === 'takeaway') pos.table = '';
+      return order;
+    });
+  }
+  function posReady() {
+    if (!posLines().length) return false;
+    if (pos.type === 'dine-in' && !pos.table) { toast('Choose the table first', 'warn'); const sel = $('[data-ptable]', root); if (sel) sel.focus(); return false; }
+    if (pos.phone && !D.cleanPhone(pos.phone)) { toast('Check the rewards phone number, or clear it', 'warn'); return false; }
+    return true;
   }
   async function posCharge(method) {
-    const lines = posLines(); if (!lines.length) return;
-    if (pos.type === 'dine-in' && !pos.table) { toast('Choose the table first', 'warn'); const sel = $('[data-ptable]', root); if (sel) sel.focus(); return; }
-    const b = posBill();
-    const tmpRef = (S().settings.prefix || 'KM') + 'P' + Date.now().toString(36).toUpperCase().slice(-5);
+    if (!posReady()) return;
+    const b = posBill(), tmpRef = (S().settings.prefix || 'KM') + 'P' + Date.now().toString(36).toUpperCase().slice(-5);
     payDialog(method, b.total, tmpRef, async (pay) => {
-      try {
-        const no = await D.api.nextNo(), now = Date.now(), ids = D.orderIds(no, S().settings.prefix || 'KM', now);
-        const order = Object.assign({ id: ids.id, no, inv: ids.inv, createdAt: now, table: pos.type === 'dine-in' ? +pos.table : null, type: pos.type, source: 'pos', customer: null,
-          items: lines.map((l) => ({ id: l.id, name: l.name, price: l.price, qty: l.qty, note: l.note || '', veg: l.veg, model: l.model })), status: 'new', log: [{ s: 'new', at: now }],
-          use: D.consumption(lines, X().menuById), pay, note: '' }, b);
-        await D.api.putOrder(order);
-        pos.lines = []; pos.disc = ''; pos.table = '';
-        refreshTicket();
-        receiptDialog(order, pay.change);
-      } catch (e) { toast('Could not save the bill. Try again.', 'bad'); }
+      try { const order = await newOrderFromTicket(pay); pos.table = ''; refreshTicket(); receiptDialog([order], pay.change); }
+      catch (e) { toast('Could not save the bill. Try again.', 'bad'); }
+    });
+  }
+  // dine-in: the kitchen gets the ticket now, the table pays at the end (Settle table)
+  async function posSendKot() {
+    if (!posReady()) return;
+    try { const o = await newOrderFromTicket({ method: 'counter', status: 'unpaid' }); refreshTicket(); toast(`${o.id} sent to the kitchen for Table ${o.table}`); render(); }
+    catch (e) { toast('Could not send the order. Try again.', 'bad'); }
+  }
+  function settleTable(t) {
+    const list = (openTabs()[+t] || []).sort((a, b) => a.createdAt - b.createdAt); if (!list.length) return toast('Nothing to settle for this table', 'warn');
+    const total = sumBy(list, (o) => o.total), ref = (S().settings.prefix || 'KM') + 'T' + t + '-' + Date.now().toString(36).toUpperCase().slice(-4);
+    const m = modal({ title: `Settle Table ${t}`, body: `<div class="panel" style="padding:4px 14px">${list.map((o) => `<div class="row" style="padding:8px 0;border-bottom:1px solid var(--line-2)"><b>${esc(o.id)}</b><span class="faint grow">${D.time12(o.createdAt)}, ${(o.items || []).reduce((a, l) => a + l.qty, 0)} items${o.pay.status === 'pending' ? ', UPI claimed' : ''}</span><b class="money">${D.money(o.total)}</b></div>`).join('')}
+        <div class="row" style="padding:10px 0;font-size:18px;font-weight:750"><span class="grow">Total</span><span class="money">${D.money(total)}</span></div></div>
+        <div class="paybtns four" style="margin-top:14px">${['cash', 'upi', 'card', 'split'].map((k) => `<button class="btn" data-cm="${k}">${icon(k === 'split' ? 'sliders' : k)}${PM[k]}</button>`).join('')}</div>`, foot: false });
+    m.el.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-cm]'); if (!b) return; m.close();
+      payDialog(b.dataset.cm, total, ref, async (pay) => {
+        const parts = pay.method === 'split' ? pay.parts : [{ m: pay.method, a: total }], shares = D.allocate(parts, list.map((o) => o.total));
+        try {
+          const done = [];
+          for (let i = 0; i < list.length; i++) {
+            const sh = shares[i], p = Object.assign({}, pay, { group: ref, groupTotal: total });
+            if (sh.length > 1) Object.assign(p, { method: 'split', parts: sh }); else { p.method = sh[0].m; delete p.parts; }
+            if (i !== list.length - 1) { delete p.change; delete p.received; }
+            await D.api.patchOrder(list[i].id, { pay: p }); done.push(Object.assign({}, list[i], { pay: p }));
+          }
+          toast(`Table ${t} settled`); receiptDialog(done, pay.change);
+        } catch (er) { toast('Could not save every payment. Check Bills and try again.', 'bad'); }
+      });
     });
   }
   function collect(id) {
@@ -367,17 +485,101 @@ const Staff = (() => {
     chooseCollect(o);
   }
   function chooseCollect(o) {
-    const m = modal({ title: `Collect ${D.money(o.total)} for ${o.id}`, body: `<div class="paybtns">${['cash', 'upi', 'card'].map((k) => `<button class="btn" data-cm="${k}">${icon(k)}${k === 'upi' ? 'UPI' : k[0].toUpperCase() + k.slice(1)}</button>`).join('')}</div>`, foot: false });
-    m.el.addEventListener('click', (e) => { const b = e.target.closest('[data-cm]'); if (!b) return; m.close(); payDialog(b.dataset.cm, o.total, o.id, async (pay) => { await D.api.patchOrder(o.id, { pay }); toast(`${o.id} paid`); const fresh = Object.assign({}, o, { pay }); receiptDialog(fresh, pay.change); }); });
+    const m = modal({ title: `Collect ${D.money(o.total)} for ${o.id}`, body: `<div class="paybtns four">${['cash', 'upi', 'card', 'split'].map((k) => `<button class="btn" data-cm="${k}">${icon(k === 'split' ? 'sliders' : k)}${PM[k]}</button>`).join('')}</div>`, foot: false });
+    m.el.addEventListener('click', (e) => { const b = e.target.closest('[data-cm]'); if (!b) return; m.close(); payDialog(b.dataset.cm, o.total, o.id, async (pay) => { await D.api.patchOrder(o.id, { pay }); toast(`${o.id} paid`); receiptDialog([Object.assign({}, o, { pay })], pay.change); }); });
   }
-  function receiptDialog(o, change) {
+  function receiptDialog(list, change) {
+    list = Array.isArray(list) ? list : [list];
+    const s = S().settings, inner = list.map((o) => Invoice.lines(o, s)).join('<div style="height:14px"></div>');
+    const phone0 = (list.find((o) => o.phone) || {}).phone || '';
     const m = modal({
-      title: `Bill ${o.id}`, body: `${change ? `<div class="banner info" style="margin-bottom:12px">${icon('cash')}<span>Return change of <b class="money">${D.money(change)}</b></span></div>` : ''}${Invoice.lines(o, S().settings)}`,
-      actions: [...(UI.canPrint() ? [{ label: 'Print', icon: 'print', cls: 'ghost', close: false, onClick: () => printHtml(null, Invoice.lines(o, S().settings)) }] : []),
-        { label: 'Download', icon: 'download', cls: 'ghost', close: false, onClick: () => { UI.download(`${o.id}-bill.html`, Invoice.html(o, S().settings), 'text/html'); } },
+      title: list.length > 1 ? `Bills for Table ${list[0].table}` : `Bill ${list[0].id}`, body: `${change ? `<div class="banner info" style="margin-bottom:12px">${icon('cash')}<span>Return change of <b class="money">${D.money(change)}</b></span></div>` : ''}
+        ${sendBox(phone0)}${inner}`,
+      actions: [...(UI.canPrint() ? [{ label: 'Print', icon: 'print', cls: 'ghost', close: false, onClick: () => printHtml(null, inner) }] : []),
+        { label: 'Download', icon: 'download', cls: 'ghost', close: false, onClick: () => { UI.download(`${list[0].id}${list.length > 1 ? '-table' : ''}-bill.html`, list.length > 1 ? Invoice.html(list[0], s).replace(Invoice.lines(list[0], s), inner) : Invoice.html(list[0], s), 'text/html'); } },
         { label: 'Done', cls: '' }],
     });
+    bindSend(m.el, list);
     return m;
+  }
+  // digital bill: opens WhatsApp (to the guest's number) or the email app with the full GST bill as text
+  const sendBox = (phone) => `<div class="sendbox"><b>Send a digital bill</b>
+      <div class="row"><input class="in" inputmode="tel" maxlength="14" placeholder="Guest's WhatsApp number" value="${esc(phone)}" data-sph aria-label="WhatsApp number"><a class="btn wa sm" data-swa target="_blank" rel="noopener">${icon('send', 'sm')}WhatsApp</a></div>
+      <div class="row"><input class="in" type="email" placeholder="Guest's email" data-sem aria-label="Email"><a class="btn quiet sm" data-smail target="_blank" rel="noopener">${icon('mail', 'sm')}Email</a></div></div>`;
+  function bindSend(el, list) {
+    const s = S().settings, multi = list.length > 1;
+    const one = multi ? Object.assign({}, list[0], { items: list.flatMap((o) => o.items || []), sub: sumBy(list, (o) => o.sub), disc: sumBy(list, (o) => o.disc || 0), taxable: sumBy(list, (o) => o.taxable), cgst: sumBy(list, (o) => o.cgst), sgst: sumBy(list, (o) => o.sgst), round: sumBy(list, (o) => o.round || 0), total: sumBy(list, (o) => o.total), inv: list.map((o) => o.inv || o.id).join(', '), id: list.map((o) => o.id).join(', '), beans: 0, pay: Object.assign({}, list[0].pay, { method: list[0].pay.group ? 'split' : list[0].pay.method, parts: [].concat(...list.map((o) => D.payParts(o))).reduce((a, p) => { const f = a.find((x) => x.m === p.m); if (f) f.a += p.a; else a.push({ m: p.m, a: p.a }); return a; }, []) }) }) : list[0];
+    const ph = $('[data-sph]', el), em = $('[data-sem]', el), wa = $('[data-swa]', el), ml = $('[data-smail]', el);
+    if (!ph) return;
+    const upd = () => {
+      const okP = !!D.cleanPhone(ph.value), okE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em.value.trim());
+      wa.href = Invoice.waLink(one, s, ph.value); wa.classList.toggle('dim', !okP);
+      ml.href = Invoice.mailLink(one, s, em.value.trim()); ml.classList.toggle('dim', !okE);
+    };
+    ph.oninput = upd; em.oninput = upd; upd();
+    const note = (via) => list.forEach((o) => { D.api.patchOrder(o.id, { sent: (o.sent || []).concat({ via, at: Date.now() }) }).catch(() => {}); });
+    wa.addEventListener('click', (e) => { if (!D.cleanPhone(ph.value)) { e.preventDefault(); toast('Enter a 10-digit WhatsApp number', 'warn'); ph.focus(); return; } note('whatsapp'); });
+    ml.addEventListener('click', (e) => { if (ml.classList.contains('dim')) { e.preventDefault(); toast('Enter the guest’s email', 'warn'); em.focus(); return; } note('email'); });
+  }
+
+  /* day close: sales, GST and the cash drawer for one day; saved as a 'close' entry in the ledger */
+  function dayClose() {
+    const sod = D.startOfDay(), eod = sod + 864e5, s = S().settings;
+    const inDay = (t) => t >= sod && t < eod;
+    const made = S().orders.filter((o) => inDay(o.createdAt) && o.status !== 'cancelled' && !(o.pay && o.pay.status === 'refunded'));
+    const paidToday = S().orders.filter((o) => o.pay && (o.pay.status === 'paid' || o.pay.status === 'refunded') && inDay(o.pay.at || o.createdAt));
+    const by = { cash: 0, upi: 0, card: 0 };
+    for (const o of paidToday) for (const p of D.payParts(o)) if (by[p.m] != null) by[p.m] += p.a;
+    const refunds = S().orders.filter((o) => o.pay && o.pay.status === 'refunded' && inDay(o.pay.refundAt || 0));
+    const cashRefund = sumBy(refunds, (o) => D.payParts(o).filter((p) => p.m === 'cash').reduce((a, p) => a + p.a, 0));
+    const unpaid = made.filter((o) => o.pay && o.pay.status !== 'paid');
+    const cancelled = S().orders.filter((o) => inDay(o.createdAt) && o.status === 'cancelled');
+    const last = S().ledger.filter((e) => e.type === 'close').sort((a, b) => b.at - a.at)[0];
+    const sum = { bills: made.length, gross: sumBy(made, (o) => o.sub), disc: sumBy(made, (o) => o.disc || 0), taxable: sumBy(made, (o) => o.taxable), cgst: sumBy(made, (o) => o.cgst), sgst: sumBy(made, (o) => o.sgst), round: sumBy(made, (o) => o.round || 0), total: sumBy(made, (o) => o.total) };
+    const float0 = last && last.close && last.close.nextFloat != null ? last.close.nextFloat : 0;
+    const row = (l, v, cls = '') => `<tr class="${cls}"><td>${l}</td><td>${v}</td></tr>`;
+    const m = modal({
+      title: `Close the day, ${D.dateShort(sod)}`, wide: true,
+      body: `<div class="grid2" style="gap:18px;align-items:start" data-zgrid>
+        <div><h3 class="zh">Sales</h3><table class="sumtbl"><tbody>
+          ${row('Bills', D.NUM.format(sum.bills))}${row('Item total', D.money(sum.gross, true))}${sum.disc ? row('Discounts', '−' + D.money(sum.disc, true)) : ''}${row('Taxable value', D.money(sum.taxable, true))}
+          ${row(`CGST`, D.money(sum.cgst, true), 'sub')}${row(`SGST`, D.money(sum.sgst, true), 'sub')}${sum.round ? row('Round off', D.money(sum.round, true), 'sub') : ''}${row('Total sales', D.money(sum.total, true), 'total')}</tbody></table>
+          <h3 class="zh">Payments taken today</h3><table class="sumtbl"><tbody>${['cash', 'upi', 'card'].map((k) => row(PM[k], D.money(by[k], true))).join('')}
+          ${row('Not paid yet', `${D.money(sumBy(unpaid, (o) => o.total), true)} <span class="faint">(${unpaid.length})</span>`, 'sub')}${row('Cancelled', `${cancelled.length}`, 'sub')}${refunds.length ? row('Refunds', '−' + D.money(sumBy(refunds, (o) => o.total), true), 'sub') : ''}</tbody></table></div>
+        <div><h3 class="zh">Cash drawer</h3>
+          <label class="field"><span>Opening cash (float)</span><input class="in" inputmode="decimal" data-zf value="${(float0 / 100).toFixed(0)}"></label>
+          <table class="sumtbl" style="margin-top:8px"><tbody>${row('Cash sales', '+' + D.money(by.cash, true), 'sub')}${cashRefund ? row('Cash refunds', '−' + D.money(cashRefund, true), 'sub') : ''}<tr class="total"><td>Expected in drawer</td><td data-zexp></td></tr></tbody></table>
+          <label class="field" style="margin-top:12px"><span>Cash counted</span><input class="in" inputmode="decimal" data-zc placeholder="Count the drawer"></label>
+          <div data-zdiff style="margin-top:8px;font-size:15px"></div>
+          <label class="field" style="margin-top:12px"><span>Leave in the drawer for tomorrow</span><input class="in" inputmode="decimal" data-znext value="${(float0 / 100).toFixed(0)}"></label>
+          <label class="field" style="margin-top:12px"><span>Note</span><input class="in" data-znote maxlength="120" placeholder="Who closed, anything unusual"></label>
+          ${last ? `<p class="faint" style="font-size:13px;margin:10px 0 0">Last closed ${D.dateShort(last.at)}, ${D.time12(last.at)}${last.close && last.close.diff ? `, ${last.close.diff > 0 ? 'over' : 'short'} by ${D.money(Math.abs(last.close.diff), true)}` : ''}.</p>` : ''}</div></div>`,
+      actions: [{ label: 'Cancel' }, { label: 'Download report', cls: 'ghost', icon: 'download', close: false, onClick: (mm) => UI.download(`day-close-${D.dayKey(sod)}.html`, zHtml(read(mm)), 'text/html') },
+        { label: 'Save and close the day', cls: 'saffron', onClick: async (mm) => {
+          const z = read(mm); if (z.counted == null) { toast('Enter the cash counted', 'warn'); $('[data-zc]', mm.el).focus(); return false; }
+          try { await D.api.addLedger({ id: D.rid('z_'), at: Date.now(), type: 'close', ing: '', qty: 0, note: z.note, close: z }); toast(z.diff ? `Day closed, cash ${z.diff > 0 ? 'over' : 'short'} by ${D.money(Math.abs(z.diff), true)}` : 'Day closed, cash matches'); } catch (e) { return false; }
+        } }],
+    });
+    const style = document.createElement('style'); style.textContent = '@media (max-width:760px){[data-zgrid]{grid-template-columns:1fr!important}}'; m.el.appendChild(style);
+    const num = (sel, el = m.el) => { const v = ($(sel, el).value || '').trim(); return v === '' ? null : Math.round((parseFloat(v) || 0) * 100); };
+    function read(el) {
+      const fl = num('[data-zf]', el.el || el) || 0, counted = num('[data-zc]', el.el || el), expected = fl + by.cash - cashRefund;
+      return Object.assign({ day: D.dayKey(sod), float: fl, expected, counted, diff: counted == null ? 0 : counted - expected, nextFloat: num('[data-znext]', el.el || el) || 0, note: ($('[data-znote]', el.el || el).value || '').trim(), by, cashRefund, unpaid: sumBy(unpaid, (o) => o.total), unpaidCount: unpaid.length, cancelled: cancelled.length }, sum);
+    }
+    const upd = () => {
+      const z = read(m.el); $('[data-zexp]', m.el).textContent = D.money(z.expected, true);
+      $('[data-zdiff]', m.el).innerHTML = z.counted == null ? '' : z.diff === 0 ? `<span style="color:var(--leaf)">${icon('check', 'sm')} Cash matches</span>` : `<span style="color:var(--danger);font-weight:650">${z.diff > 0 ? 'Over' : 'Short'} by ${D.money(Math.abs(z.diff), true)}</span>`;
+    };
+    m.el.addEventListener('input', upd); upd();
+    function zHtml(z) {
+      const r = (l, v) => `<tr><td>${l}</td><td class="r">${v}</td></tr>`;
+      return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Day close ${z.day}</title><style>body{font-family:ui-monospace,Menlo,monospace;font-size:13px;max-width:320px;margin:16px auto}h1{font-size:18px;margin:0}table{width:100%;border-collapse:collapse}td{padding:2px 0}.r{text-align:right}hr{border:0;border-top:1px dashed #000}</style></head><body>
+        <h1>${esc(s.name)}</h1><div>Day close ${esc(z.day)}<br>Printed ${new Date().toLocaleString('en-IN')}</div><hr>
+        <table>${r('Bills', z.bills)}${r('Item total', (z.gross / 100).toFixed(2))}${r('Discounts', (z.disc / 100).toFixed(2))}${r('Taxable value', (z.taxable / 100).toFixed(2))}${r('CGST', (z.cgst / 100).toFixed(2))}${r('SGST', (z.sgst / 100).toFixed(2))}${r('Round off', (z.round / 100).toFixed(2))}${r('<b>Total sales</b>', '<b>' + (z.total / 100).toFixed(2) + '</b>')}</table><hr>
+        <table>${r('Cash', (z.by.cash / 100).toFixed(2))}${r('UPI', (z.by.upi / 100).toFixed(2))}${r('Card', (z.by.card / 100).toFixed(2))}${r('Not paid yet', (z.unpaid / 100).toFixed(2) + ' (' + z.unpaidCount + ')')}${r('Cancelled bills', z.cancelled)}</table><hr>
+        <table>${r('Opening cash', (z.float / 100).toFixed(2))}${r('Cash sales', (z.by.cash / 100).toFixed(2))}${r('Cash refunds', (-z.cashRefund / 100).toFixed(2))}${r('<b>Expected</b>', '<b>' + (z.expected / 100).toFixed(2) + '</b>')}${r('Counted', z.counted == null ? '-' : (z.counted / 100).toFixed(2))}${r('Over / short', (z.diff / 100).toFixed(2))}${r('Float for tomorrow', (z.nextFloat / 100).toFixed(2))}</table>
+        ${z.note ? `<hr><div>${esc(z.note)}</div>` : ''}<hr><div>GSTIN ${esc(s.gstin)}</div></body></html>`;
+    }
   }
 
   /* ---------------- bills ---------------- */
@@ -388,7 +590,7 @@ const Staff = (() => {
   }
   function payCell(o) {
     const p = o.pay || {};
-    const m = { upi: 'UPI', card: 'Card', cash: 'Cash', counter: 'Counter' }[p.method] || '';
+    const m = p.method === 'split' ? D.payParts(o).map((x) => PM[x.m] || x.m).join(' + ') : PM[p.method] || '';
     if (o.status === 'cancelled') return `<span class="chip">${p.status === 'refunded' ? 'Refunded' : 'Cancelled'}</span>`;
     return p.status === 'paid' ? `<span class="chip ok">${m}</span>` : p.status === 'pending' ? '<span class="chip warn">UPI to confirm</span>' : p.status === 'refunded' ? '<span class="chip">Refunded</span>' : '<span class="chip bad">Unpaid</span>';
   }
@@ -413,13 +615,14 @@ const Staff = (() => {
     if (p.status === 'paid' && o.status !== 'cancelled') acts.push({ label: 'Refund', cls: 'ghost', onClick: async () => { const ok = await confirmBox(`Refund ${D.money(o.total)} for ${o.id}? Return the money the same way it was paid.`, { title: 'Refund this bill?', ok: 'Mark refunded', danger: true }); if (ok) { await D.api.patchOrder(o.id, { pay: Object.assign({}, p, { status: 'refunded', refundAt: Date.now() }) }); toast(`${o.id} refunded`); } } });
     acts.push({ label: 'Download', icon: 'download', cls: 'ghost', close: false, onClick: () => { UI.download(`${o.id}-bill.html`, Invoice.html(o, S().settings), 'text/html'); } });
     if (UI.canPrint()) acts.push({ label: 'Print', icon: 'print', cls: 'ghost', close: false, onClick: () => printHtml(null, Invoice.lines(o, S().settings)) });
-    modal({ title: `Bill ${o.id}`, body: `<div class="row wrap" style="margin-bottom:12px">${stChip(o)}${payCell(o)}<span class="chip">${o.source === 'portal' ? 'Customer portal' : 'Counter'}</span>${(o.log || []).map((l) => `<span class="faint" style="font-size:12.5px">${l.s} ${D.time12(l.at)}</span>`).join('')}</div>${Invoice.lines(o, S().settings)}`, actions: acts });
+    const m = modal({ title: `Bill ${o.id}`, body: `<div class="row wrap" style="margin-bottom:12px">${stChip(o)}${payCell(o)}<span class="chip">${o.source === 'portal' ? 'Customer portal' : 'Counter'}</span>${(o.log || []).map((l) => `<span class="faint" style="font-size:12.5px">${l.s} ${D.time12(l.at)}</span>`).join('')}${(o.sent || []).length ? `<span class="chip ok">Sent by ${esc([...new Set(o.sent.map((x) => (x.via === 'whatsapp' ? 'WhatsApp' : 'email')))].join(' and '))}</span>` : ''}</div>${sendBox(o.phone || '')}${Invoice.lines(o, S().settings)}`, actions: acts });
+    bindSend(m.el, [o]);
   }
   function csv(rows) { return rows.map((r) => r.map((v) => { const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; }).join(',')).join('\n'); }
   function exportBills() {
     const list = billsFiltered();
     const rows = [['Invoice', 'Order', 'Date', 'Time', 'Table', 'Type', 'Items', 'Sub total', 'Discount', 'Taxable', 'CGST', 'SGST', 'Round off', 'Total', 'Payment', 'Payment status', 'Order status', 'Source']];
-    for (const o of list) rows.push([o.inv, o.id, D.dayKey(o.createdAt), D.time12(o.createdAt), o.table || '', o.type, (o.items || []).map((l) => `${l.qty} x ${l.name}`).join('; '), (o.sub / 100).toFixed(2), ((o.disc || 0) / 100).toFixed(2), (o.taxable / 100).toFixed(2), (o.cgst / 100).toFixed(2), (o.sgst / 100).toFixed(2), ((o.round || 0) / 100).toFixed(2), (o.total / 100).toFixed(2), (o.pay || {}).method || '', (o.pay || {}).status || '', o.status, o.source]);
+    for (const o of list) rows.push([o.inv, o.id, D.dayKey(o.createdAt), D.time12(o.createdAt), o.table || '', o.type, (o.items || []).map((l) => `${l.qty} x ${l.name}`).join('; '), (o.sub / 100).toFixed(2), ((o.disc || 0) / 100).toFixed(2), (o.taxable / 100).toFixed(2), (o.cgst / 100).toFixed(2), (o.sgst / 100).toFixed(2), ((o.round || 0) / 100).toFixed(2), (o.total / 100).toFixed(2), (o.pay || {}).method === 'split' ? D.payParts(o).map((x) => `${x.m} ${(x.a / 100).toFixed(2)}`).join(' + ') : (o.pay || {}).method || '', (o.pay || {}).status || '', o.status, o.source]);
     UI.download(`bills-${bf.range}-${D.dayKey(Date.now())}.csv`, csv(rows), 'text/csv');
   }
 
@@ -509,6 +712,37 @@ const Staff = (() => {
     }
   }
 
+  /* ---------------- customer app controls: every switch saves at once and reaches guests' phones live ---------------- */
+  const SWITCHES = [
+    ['Ordering', [['orderingOpen', 'Take orders in the app', 'Off: guests can still browse the menu but can’t place orders. Use it when the kitchen is full or closing.'],
+      ['dineIn', 'Dine-in orders', 'Guests at a table order from their phone.'], ['takeaway', 'Takeaway orders', 'Guests order to pick up at the counter.'],
+      ['pickupAhead', 'Order ahead for a pickup time', 'Takeaway guests choose 15 to 60 minutes ahead.']]],
+    ['Payments in the app', [['payUpi', 'UPI', 'QR and “Open UPI app”; staff confirm the payment.'], ['payCard', 'Card', 'Test mode until Razorpay is connected.'], ['payCounter', 'Pay at the counter', 'Cash, UPI or card at the counter. If every option is off, this one stays on.']]],
+    ['Menu experience', [['customise', 'Customisation', 'Size, milk, add-ons and spice with their prices.'], ['pairings', '“Goes well with” suggestions', 'Three dishes from other categories on each dish.'], ['arView', 'Table view (3D camera)', 'The camera button and “See it on my table”.']]],
+  ];
+  function appControls() {
+    const s = S().settings, on = (k) => s[k] !== false;
+    const members = new Set(S().orders.filter((o) => o.phone).map((o) => o.phone)).size;
+    const redeemed = S().orders.filter((o) => o.beans && o.status !== 'cancelled');
+    return head('Customer app', 'What guests see and can do on their phones. Changes apply straight away, no app update needed.', `<a class="btn ghost" href="${custHref('#menu')}"${custAttrs}>${icon('ext')}Open the customer app</a>`) +
+      `<div class="setup">
+        ${SWITCHES.map(([title, list]) => `<div class="box"><h2>${title}</h2><div class="ctl">${list.map(([k, t, sub]) => `<label><span class="t">${t}<small>${sub}</small></span><span class="switch"><input type="checkbox" data-ctl="${k}" ${on(k) ? 'checked' : ''}></span></label>`).join('')}</div></div>`).join('')}
+        <div class="box"><h2>${icon('star')}Rewards</h2><div class="ctl"><label><span class="t">Café rewards (beans)<small>Guests add a phone number and earn on paid bills, in the app and at the counter. Turning it off hides rewards everywhere; balances are kept.</small></span><span class="switch"><input type="checkbox" data-ctl="loyalty" ${on('loyalty') ? 'checked' : ''}></span></label></div>
+          <div class="grid3" ${on('loyalty') ? '' : 'style="opacity:.5"'}><label class="field"><span>₹ spent per bean</span><input class="in" inputmode="numeric" data-num="beanPer" value="${esc(s.beanPer || 10)}"></label>
+          <label class="field"><span>Beans to redeem</span><input class="in" inputmode="numeric" data-num="redeemBeans" value="${esc(s.redeemBeans || 100)}"></label>
+          <label class="field"><span>₹ off when redeemed</span><input class="in" inputmode="numeric" data-num="redeemValue" value="${esc(s.redeemValue || 50)}"></label></div>
+          <small class="faint">Now: 1 bean per ₹${s.beanPer || 10}, ${s.redeemBeans || 100} beans give ₹${s.redeemValue || 50} off (about ${(((s.redeemValue || 50) / ((s.redeemBeans || 100) * (s.beanPer || 10))) * 100).toFixed(1)}% back). ${members} member${members === 1 ? '' : 's'} so far, ${redeemed.length} redemption${redeemed.length === 1 ? '' : 's'}.</small></div>
+        <div class="box"><h2>${icon('info')}Message on the menu</h2><label class="field"><span>Shown at the top of the customer app</span><textarea class="in" data-notice maxlength="140" placeholder="Today only: 20% off cold coffee after 4 pm">${esc(s.notice || '')}</textarea></label>
+          <div class="row"><button class="btn sm" data-a="noticesave">Show message</button>${s.notice ? '<button class="btn ghost sm" data-a="noticeclear">Remove</button>' : ''}</div></div>
+      </div>`;
+  }
+  async function setCtl(k, val) {
+    const patch = { [k]: val };
+    if (['payUpi', 'payCard', 'payCounter'].includes(k) && !val) { const s = Object.assign({}, S().settings, patch); if (s.payUpi === false && s.payCard === false && s.payCounter === false) { patch.payCounter = true; toast('Pay at the counter stays on so guests can still order', 'warn'); } }
+    if (['dineIn', 'takeaway'].includes(k) && !val) { const s = Object.assign({}, S().settings, patch); if (s.dineIn === false && s.takeaway === false) { patch.orderingOpen = false; toast('Both order types are off, so app ordering is paused', 'warn'); } }
+    try { await D.api.setSettings(patch); toast('Saved. Guests see it now.', 'ok', 1500); } catch (e) { /* handled */ }
+  }
+
   /* ---------------- pickup screen (order status board for a TV at the counter) ---------------- */
   const boardSeen = new Set(); let boardPrimed = false, boardClock = 0;
   function board() {
@@ -562,8 +796,8 @@ const Staff = (() => {
       const sod = D.startOfDay(), used = {};
       for (const o of S().orders) if (o.createdAt >= sod && o.status !== 'cancelled') for (const k in o.use || {}) used[k] = (used[k] || 0) + o.use[k];
       const usedRows = Object.entries(used).map(([k, v]) => ({ s: X().stockById[k], v })).filter((r) => r.s).sort((a, b) => b.v * (b.s.cost || 0) - a.v * (a.s.cost || 0));
-      body = `<div class="dash"><div class="box"><h2>Stock movements <span class="faint">Purchases, wastage and counts</span></h2>${S().ledger.length ? `<div class="tblwrap" style="border:0"><table class="tbl"><thead><tr><th>When</th><th>Ingredient</th><th>Type</th><th class="r">Change</th><th>Note</th></tr></thead><tbody>
-        ${S().ledger.slice(0, 80).map((e) => { const s = X().stockById[e.ing]; return `<tr><td>${D.dateShort(e.at)}, ${D.time12(e.at)}</td><td>${esc(s ? s.name : e.ing)}</td><td>${{ purchase: '<span class="chip ok">Purchase</span>', waste: '<span class="chip bad">Wastage</span>', count: '<span class="chip info">Count</span>' }[e.type] || esc(e.type)}</td><td class="r num">${e.qty > 0 ? '+' : ''}${s ? fmtQty(e.qty, s.unit) : e.qty}</td><td class="muted">${esc(e.note || '')}</td></tr>`; }).join('')}</tbody></table></div>` : '<p class="muted" style="margin:0">No purchases, wastage or counts recorded yet.</p>'}</div>
+      body = `<div class="dash"><div class="box"><h2>Stock movements <span class="faint">Purchases, wastage and counts</span></h2>${S().ledger.some((e) => e.type !== 'close') ? `<div class="tblwrap" style="border:0"><table class="tbl"><thead><tr><th>When</th><th>Ingredient</th><th>Type</th><th class="r">Change</th><th>Note</th></tr></thead><tbody>
+        ${S().ledger.filter((e) => e.type !== 'close').slice(0, 80).map((e) => { const s = X().stockById[e.ing]; return `<tr><td>${D.dateShort(e.at)}, ${D.time12(e.at)}</td><td>${esc(s ? s.name : e.ing)}</td><td>${{ purchase: '<span class="chip ok">Purchase</span>', waste: '<span class="chip bad">Wastage</span>', count: '<span class="chip info">Count</span>' }[e.type] || esc(e.type)}</td><td class="r num">${e.qty > 0 ? '+' : ''}${s ? fmtQty(e.qty, s.unit) : e.qty}</td><td class="muted">${esc(e.note || '')}</td></tr>`; }).join('')}</tbody></table></div>` : '<p class="muted" style="margin:0">No purchases, wastage or counts recorded yet.</p>'}</div>
         <div class="box"><h2>Used today <span class="faint">From today’s orders</span></h2>${usedRows.length ? hbars(usedRows.slice(0, 12).map((r) => ({ l: r.s.name, v: r.v * (r.s.cost || 0), q: r.v, u: r.s.unit })), (r) => fmtQty(r.q, r.u)) : '<p class="muted" style="margin:0">Nothing used yet today.</p>'}</div></div>`;
     }
     return head('Stock', 'Every order deducts its recipe from stock. Dishes sell out on their own when an ingredient runs out.', `<button class="btn" data-a="snew">${icon('plus')}Add ingredient</button>`) +
@@ -641,7 +875,7 @@ const Staff = (() => {
     const itemTot = sumBy(itemRows, ([, it]) => it.v) || 1;
     let cogs = 0; for (const [id, it] of itemRows) { const d = X().menuById[id]; if (d) cogs += D.foodCost(d, X().stockById) * it.q; }
     const paidL = good.filter((o) => o.pay && o.pay.status === 'paid');
-    const pay = ['upi', 'card', 'cash'].map((k) => ({ l: { upi: 'UPI', card: 'Card', cash: 'Cash' }[k], c: C[k], v: sumBy(paidL.filter((o) => o.pay.method === k), (o) => o.total) }));
+    const pay = ['upi', 'card', 'cash'].map((k) => ({ l: { upi: 'UPI', card: 'Card', cash: 'Cash' }[k], c: C[k], v: paidL.reduce((a, o) => a + D.payParts(o).filter((p) => p.m === k).reduce((x, p) => x + p.a, 0), 0) }));
     const unpaid = sumBy(good.filter((o) => o.pay && o.pay.status !== 'paid'), (o) => o.total);
     return head('Reports', 'Sales, GST and food cost for the period. Cancelled and refunded bills are left out of sales.', `<button class="btn ghost sm" data-a="gstcsv">${icon('download', 'sm')}GST summary CSV</button><button class="btn ghost sm" data-a="itemcsv">${icon('download', 'sm')}Item sales CSV</button>`) +
       `<div class="toolbar"><div class="pills">${[['today', 'Today'], ['yesterday', 'Yesterday'], ['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['month', 'This month']].map(([k, l]) => `<button class="pill" data-rr="${k}" aria-pressed="${rf.range === k}">${l}</button>`).join('')}</div></div>
@@ -713,8 +947,7 @@ const Staff = (() => {
           <small class="faint">Guests pay to this UPI ID from the QR on their bill. Card payments run in test mode until a payment gateway such as Razorpay is connected on your own website.</small></div>
         <div class="box"><h2>Orders</h2><div class="grid2">${f('prefix', 'Order ID prefix', 'maxlength="4" style="text-transform:uppercase"')}${f('tables', 'Tables', 'inputmode="numeric"')}</div>
           <label class="row" style="justify-content:space-between"><span>Serve dishes only in their set hours</span><span class="switch"><input type="checkbox" name="timeMenus" ${s.timeMenus !== false ? 'checked' : ''}></span></label>
-          <label class="row" style="justify-content:space-between"><span>Café rewards (beans) for guests who give a phone number</span><span class="switch"><input type="checkbox" name="loyalty" ${s.loyalty !== false ? 'checked' : ''}></span></label>
-          <div class="grid3">${f('beanPer', '₹ per bean', 'inputmode="numeric"')}${f('redeemBeans', 'Beans to redeem', 'inputmode="numeric"')}${f('redeemValue', '₹ off', 'inputmode="numeric"')}</div>
+          <small class="faint">Rewards, payment methods and other customer app options are on the <a href="${href('app')}">Customer app</a> page.</small>
           <label class="field"><span>Staff PIN</span><input class="in" name="pin" inputmode="numeric" maxlength="4" value="${esc(s.pin || '1234')}"></label></div>
         <div class="box"><h2>Data</h2><p class="muted" style="margin:0">${supa() ? 'Orders, menu and stock live in your Supabase project and sync to every phone and counter in real time.' : S().mode === 'cloud' ? 'Orders, menu and stock are shared live between every device that opens this page while signed in to Claude.' : 'Data is saved in this browser. To share orders between phones and the counter, connect a shared database or open this page inside Claude.'}</p>
           <div class="row wrap"><button type="button" class="btn ghost sm" data-a="sample">${icon('chart', 'sm')}Add sample sales</button>${demo ? `<button type="button" class="btn ghost sm" data-a="unsample">${icon('trash', 'sm')}Remove ${demo} sample sales</button>` : ''}
@@ -724,8 +957,7 @@ const Staff = (() => {
   async function saveSetup() {
     const fm = $('[data-sform]', root); if (!fm) return;
     const v = (n) => (fm.elements[n].type === 'checkbox' ? fm.elements[n].checked : fm.elements[n].value.trim());
-    const patch = { name: v('name'), tagline: v('tagline'), address: v('address'), phone: v('phone'), gstin: v('gstin').toUpperCase(), fssai: v('fssai'), gstRate: +v('gstRate'), sac: v('sac'), taxInclusive: v('taxInclusive'), upiId: v('upiId'), upiName: v('upiName'), prefix: v('prefix').toUpperCase().replace(/[^A-Z]/g, '') || 'KM', tables: Math.max(1, Math.min(99, parseInt(v('tables'), 10) || 12)), timeMenus: v('timeMenus'), pin: v('pin'),
-      loyalty: v('loyalty'), beanPer: Math.max(1, parseInt(v('beanPer'), 10) || 10), redeemBeans: Math.max(1, parseInt(v('redeemBeans'), 10) || 100), redeemValue: Math.max(1, parseInt(v('redeemValue'), 10) || 50) };
+    const patch = { name: v('name'), tagline: v('tagline'), address: v('address'), phone: v('phone'), gstin: v('gstin').toUpperCase(), fssai: v('fssai'), gstRate: +v('gstRate'), sac: v('sac'), taxInclusive: v('taxInclusive'), upiId: v('upiId'), upiName: v('upiName'), prefix: v('prefix').toUpperCase().replace(/[^A-Z]/g, '') || 'KM', tables: Math.max(1, Math.min(99, parseInt(v('tables'), 10) || 12)), timeMenus: v('timeMenus'), pin: v('pin') };
     if (!patch.name) return toast('Enter the café name', 'warn');
     if (!/^\d{4}$/.test(patch.pin)) return toast('The staff PIN needs 4 digits', 'warn');
     if (patch.upiId && !/^[\w.-]{2,}@[a-zA-Z]{2,}$/.test(patch.upiId)) return toast('That UPI ID doesn’t look right, for example yourcafe@okaxis', 'warn');
@@ -739,7 +971,11 @@ const Staff = (() => {
     if (a === 'lock') { if (supa()) D.api.adapter.signOut().catch(() => {}); unlocked = false; try { sessionStorage.removeItem('km.staff'); } catch (e) { /* ignore */ } render(); }
     if (a === 'side') { sideOpen = !sideOpen; $('.side', root).classList.toggle('open', sideOpen); }
     if (a === 'sound') { soundOn = !soundOn; if (soundOn) { UI.unlockAudio(); UI.chime(); } render(); }
-    if (a === 'pclear') { pos.lines = []; pos.disc = ''; refreshTicket(); }
+    if (a === 'pclear') { Object.assign(pos, { lines: [], disc: '', phone: '', redeem: false }); refreshTicket(); }
+    if (a === 'pkot') posSendKot();
+    if (a === 'noticesave') { const v = ($('[data-notice]', root).value || '').trim(); await D.api.setSettings({ notice: v }); toast(v ? 'Message is live on the menu' : 'Message removed'); }
+    if (a === 'noticeclear') { await D.api.setSettings({ notice: '' }); toast('Message removed'); }
+    if (a === 'zreport') dayClose();
     if (a === 'bcsv') exportBills();
     if (a === 'gstcsv') exportGST();
     if (a === 'itemcsv') exportItems();
@@ -785,7 +1021,9 @@ const Staff = (() => {
     if ((el = g('[data-bill]'))) return billDialog(el.dataset.bill);
     if ((el = g('[data-collect]'))) return collect(el.dataset.collect);
     if ((el = g('[data-padd]'))) return posAdd(el.dataset.padd);
-    if ((el = g('[data-pinc]'))) { const l = pos.lines[+el.dataset.pinc]; if (l) posAdd(l.id); return; }
+    if ((el = g('[data-pinc]'))) { const l = pos.lines[+el.dataset.pinc]; if (l) posAdd(l.id, l); return; }
+    if ((el = g('[data-pedit]'))) return lineEditor(+el.dataset.pedit);
+    if ((el = g('[data-psettle]'))) return settleTable(el.dataset.psettle);
     if ((el = g('[data-pdec]'))) { const i = +el.dataset.pdec; if (pos.lines[i]) { pos.lines[i].qty--; if (pos.lines[i].qty <= 0) pos.lines.splice(i, 1); } return refreshTicket(); }
     if ((el = g('[data-pt]'))) { pos.type = el.dataset.pt; return refreshTicket(); }
     if ((el = g('[data-pdm]'))) { pos.discMode = el.dataset.pdm; return refreshTicket(); }
@@ -806,17 +1044,31 @@ const Staff = (() => {
   function onInput(e) {
     const t = e.target;
     if (t.matches('[data-pq]')) { pos.q = t.value; refreshTiles(); }
-    if (t.matches('[data-pdisc]')) { pos.disc = t.value; const tb = $('[data-ptot]', root); if (tb) tb.innerHTML = totRows(posBill()); }
+    if (t.matches('[data-pdisc]')) { pos.disc = t.value; refreshTotals(); }
+    if (t.matches('[data-pphone]')) { pos.phone = t.value; if (!D.cleanPhone(pos.phone)) pos.redeem = false; refreshTotals(); }
+    if (t.matches('[data-predeem]')) { pos.redeem = t.checked; refreshTotals(); }
     if (t.matches('[data-bq]')) { bf.q = t.value; clearTimeout(onInput.t); onInput.t = setTimeout(() => { render(); const i = $('[data-bq]', root); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 250); }
     if (t.matches('[data-mq]')) { mf.q = t.value; clearTimeout(onInput.t); onInput.t = setTimeout(() => { render(); const i = $('[data-mq]', root); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 250); }
     if (t.matches('[data-sq]')) { sf.q = t.value; clearTimeout(onInput.t); onInput.t = setTimeout(() => { render(); const i = $('[data-sq]', root); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 250); }
   }
   function onChange(e) {
+    if (e.target.matches && e.target.matches('[data-predeem]')) { pos.redeem = e.target.checked; refreshTotals(); return; }
+    if (e.target.matches && e.target.matches('[data-ctl]')) return setCtl(e.target.dataset.ctl, e.target.checked);
+    if (e.target.matches && e.target.matches('[data-num]')) { const v = Math.max(1, parseInt(e.target.value, 10) || 0); if (!v) return; return setCtl(e.target.dataset.num, v); }
     const t = e.target;
     if (t.matches('[data-ptable]')) pos.table = t.value;
     if (t.matches('[data-dact]')) { const d = X().menuById[t.dataset.dact]; if (d) D.api.putDish(Object.assign({}, d, { active: t.checked })).then(() => toast(`${d.name} ${t.checked ? 'is on the menu' : 'is hidden from the menu'}`)); }
   }
-  function onKey(e) { if (e.key === 'Enter' && e.target.matches('tr[data-bill]')) billDialog(e.target.dataset.bill); }
+  function onKey(e) {
+    if (e.key === 'Enter' && e.target.matches('tr[data-bill]')) billDialog(e.target.dataset.bill);
+    // billing: Enter in search adds the first available match, Escape clears the search
+    if (page === 'billing' && e.target.matches('[data-pq]')) {
+      if (e.key === 'Enter') { e.preventDefault(); const d = posTiles().find((x) => status(x).ok); if (d && posAdd(d.id)) { pos.q = ''; e.target.value = ''; refreshTiles(); } }
+      if (e.key === 'Escape') { pos.q = ''; e.target.value = ''; refreshTiles(); }
+    }
+  }
+  // "/" jumps to the dish search on the billing screen
+  document.addEventListener('keydown', (e) => { if (e.key !== '/' || page !== 'billing' || !document.body.classList.contains('s-mode') || e.target.matches('input,textarea,select') || document.querySelector('.scrim')) return; const i = $('[data-pq]', root); if (i) { e.preventDefault(); i.focus(); } });
 
   /* ---------------- new-order alerts ---------------- */
   function watch() {

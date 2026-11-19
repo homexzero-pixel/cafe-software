@@ -31,7 +31,7 @@ Plain JavaScript (ES2020), no framework and no runtime dependencies. The build i
 | `app.js` | | Boot and hash router |
 | `styles.css`, `template.html` | | Styles and page shell |
 
-Routes (hash): customer `#table-N`, `#menu`, `#ar`, `#cart`, `#bills`; café dashboard `#overview`, `#orders`, `#billing`, `#bills`, `#menu`, `#stock`, `#reports`, `#board` (pickup TV), `#tables`, `#setup` (in demo.html they are prefixed `#staff-`, plus `#welcome`).
+Routes (hash): customer `#table-N`, `#menu`, `#ar`, `#cart`, `#bills`; café dashboard `#overview`, `#orders`, `#billing`, `#bills`, `#menu`, `#stock`, `#reports`, `#board` (pickup TV), `#app` (customer app switches), `#tables`, `#setup` (in demo.html they are prefixed `#staff-`, plus `#welcome`).
 
 ## Data model
 
@@ -39,8 +39,8 @@ Document paths: `cafe/settings`, `menu/{id}`, `stock/{id}`, `orders/{id}`, `ledg
 
 - **Dish**: `name, category, price` (rupees, before GST), `veg, model, kcal, prep, from, to` ("HH:MM" or empty for all day), `desc, tags, active, sort, recipe: [{ing, qty}]` (per serving, in the ingredient's unit), optional `options: [{name, many, choices: [{n, p, r}]}]` (customisation; `p` extra ₹, `r` extra ingredients; without it the category's set in `CATEGORY_OPTIONS` applies, `[]` turns it off).
 - **Ingredient**: `name, unit` (g, ml, pc, slice), `base, baseAt` (counted quantity and when), `reorder, cost` (₹ per unit), `supplier`.
-- **Ledger entry**: `at, ing, type` (purchase, waste, count), `qty` (signed), `cost, note`.
-- **Order**: `id` (KM-1043), `no, inv` (KM/26-27/1043), `createdAt, table, type` (dine-in, takeaway), `source` (portal, pos), `customer, items[]` (each with `opts` names), optional `phone` (rewards), `beans` (redeemed), `pickupAt`, money fields `sub, disc, taxable, cgst, sgst, round, total` (integer paise), `rate, incl, status` (new, preparing, ready, served, cancelled), `log[]`, `use` (ingredient consumption snapshot), `pay {method, status, ref, last4, ...}`, `demo` for sample sales.
+- **Ledger entry**: `at, ing, type` (purchase, waste, count, or `close` for a day close with its summary in `close`; stock ignores it), `qty` (signed), `cost, note`.
+- **Order**: `id` (KM-1043), `no, inv` (KM/26-27/1043), `createdAt, table, type` (dine-in, takeaway), `source` (portal, pos), `customer, items[]` (each with `opts` names), optional `phone` (rewards), `beans` (redeemed), `pickupAt`, money fields `sub, disc, taxable, cgst, sgst, round, total` (integer paise), `rate, incl, status` (new, preparing, ready, served, cancelled), `log[]`, `use` (ingredient consumption snapshot), `pay {method (cash, upi, card, counter, split), status, ref, last4, parts [{m, a}] for split, group for a settled table, ...}` (read amounts per method with `Data.payParts`), `sent[]` (digital bill sent by WhatsApp or email), `demo` for sample sales.
 
 ## Rules that matter
 
@@ -50,6 +50,7 @@ Document paths: `cafe/settings`, `menu/{id}`, `stock/{id}`, `orders/{id}`, `ledg
 - **No automatic service charge.** It must stay voluntary, so the software never adds one.
 - **Invoice numbers** are consecutive per financial year (April to March): `PREFIX/YY-YY/NNNN`.
 - **Stock is derived, not decremented**: stock = `base` (at `baseAt`) + ledger entries after `baseAt` − `use` of non-cancelled orders created at or after `baseAt`. A stock count resets `base` and `baseAt`. This avoids lost updates when several devices order at once.
+- **Customer app switches** live in settings (`orderingOpen, dineIn, takeaway, pickupAhead, payUpi, payCard, payCounter, customise, pairings, arView, loyalty, notice`), edited on `#app`; `customer.js` reads them through `on(k)` and redraws when settings change.
 - **Rewards are derived too** (`Data.beans`): 1 bean per `beanPer` ₹ of paid, non-cancelled bills, minus `beans` redeemed. Redemption is a discount (`disc`) before GST.
 - **Availability** (`Data.dishStatus`): on the menu, inside serving hours (when `settings.timeMenus` is on), and enough stock for one more portion after what is already in the cart.
 - Escape every data string with `UI.esc()` when building HTML.

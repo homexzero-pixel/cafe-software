@@ -5,7 +5,7 @@ const Cust = (() => {
   const D = Data;
   let root = null, view = 'menu', cat = 'All', q = '', vegOnly = false, payMethod = 'upi';
   let cart = { lines: [], table: null, type: 'dine-in', pickup: 0, phone: '', redeem: false };
-  let heroKey = null, openSheet = null, lastSeen = {};
+  let heroKey = null, openSheet = null, lastSeen = {}, lastSettings = null;
   const CK = 'km.cart.v2', IDK = 'km.cid';
 
   /* ---------- persistence (this device only: cart + who I am) ---------- */
@@ -20,7 +20,13 @@ const Cust = (() => {
   const qty = (id) => cart.lines.filter((l) => l.id === id).reduce((s, l) => s + l.qty, 0);
   const lineCount = () => cart.lines.reduce((s, l) => s + l.qty, 0);
   const cartLines = () => cart.lines.map((l) => { const d = X().menuById[l.id]; return d ? Object.assign({}, l, { name: d.name, price: d.price + (Number(l.add) || 0), veg: d.veg, model: d.model }) : null; }).filter(Boolean);
-  const hasOpts = (d) => D.optionGroups(d).length > 0;
+  // switches the café controls from its dashboard (Customer app page)
+  const on = (k) => S().settings[k] !== false;
+  const payOn = () => { const l = ['upi', 'card', 'counter'].filter((k) => on('pay' + k[0].toUpperCase() + k.slice(1))); return l.length ? l : ['counter']; };
+  const types = () => ['dine-in', 'takeaway'].filter((k) => on(k === 'dine-in' ? 'dineIn' : 'takeaway'));
+  const fixType = () => { const t = types(); if (t.length && !t.includes(cart.type)) cart.type = t[0]; if (!payOn().includes(payMethod)) payMethod = payOn()[0]; };
+  const groupsFor = (d) => (on('customise') ? D.optionGroups(d) : []);
+  const hasOpts = (d) => groupsFor(d).length > 0;
   const optLine = (l) => ((l.opts || []).length ? `<div class="opts">${esc(l.opts.join(', '))}</div>` : '');
   const lineSel = (l) => ({ opts: l.opts || [], add: Number(l.add) || 0, r: l.xr || {} });
   /* rewards: phone number on this device, balance derived from orders */
@@ -36,7 +42,7 @@ const Cust = (() => {
   const status = (d) => D.dishStatus(d, X().stockMap, S().settings, new Date());
   const cats = () => { const set = []; for (const d of S().menu) if (!set.includes(d.category)) set.push(d.category); return set; };
   function add(d, n = 1, note = '', sel = null) {
-    sel = sel || D.resolveOpts(d);
+    sel = sel || (on('customise') ? D.resolveOpts(d) : { opts: [], add: 0, r: {} });
     const key = sel.opts.join('|');
     const st = status(d);
     if (n > 0 && !st.ok) { toast(`${d.name}: ${st.label}`, 'warn'); return false; }
@@ -55,14 +61,18 @@ const Cust = (() => {
 
   /* ---------- layout ---------- */
   function nav() {
-    const n = lineCount();
+    const n = lineCount(), ar = on('arView');
     const item = (h, ic, label, extra = '') => `<a href="#${h}" ${view === h ? 'aria-current="page"' : ''} ${extra}>${ic}<span>${label}</span></a>`;
-    return `<nav class="bnav" aria-label="Customer">
+    return `<nav class="bnav" aria-label="Customer" ${ar ? '' : 'style="grid-template-columns:repeat(3,1fr)"'}>
       ${item('menu', icon('utensils'), 'Menu')}
-      <a href="#ar" class="cam" ${view === 'ar' ? 'aria-current="page"' : ''}><span class="ring">${icon('camera')}</span><span>Table view</span></a>
+      ${ar ? `<a href="#ar" class="cam" ${view === 'ar' ? 'aria-current="page"' : ''}><span class="ring">${icon('camera')}</span><span>Table view</span></a>` : ''}
       <a href="#cart" ${view === 'cart' ? 'aria-current="page"' : ''}>${icon('bag')}<span>Order</span>${n ? `<span class="badge">${n}</span>` : ''}</a>
       ${item('bills', icon('receipt'), 'Bills')}
     </nav>`;
+  }
+  function noticeBar() {
+    const s = S().settings;
+    return `${!on('orderingOpen') ? `<div class="notice closed" role="status">${icon('clock', 'sm')}<span>We’re not taking orders in the app right now. You can still browse the menu, or order at the counter.</span></div>` : ''}${s.notice ? `<div class="notice" role="status">${icon('info', 'sm')}<span>${esc(s.notice)}</span></div>` : ''}`;
   }
   function tableLabel() { return cart.type === 'takeaway' ? 'Takeaway' : cart.table ? `Table ${cart.table}` : 'Choose table'; }
   function cartbar() {
@@ -77,12 +87,13 @@ const Cust = (() => {
     const pick = S().menu.find((d) => status(d).ok && (d.tags || []).includes('Bestseller')) || S().menu.find((d) => status(d).ok) || S().menu[0];
     heroKey = pick ? pick.model : 'cappuccino';
     return `<header class="c-head">
-      <div class="c-top"><span class="plate">${esc(s.name)}</span><button class="tbl-chip" data-act="table">${icon(cart.type === 'takeaway' ? 'takeaway' : 'dine', 'sm')}${esc(tableLabel())}</button></div>
+      <div class="c-top"><span class="plate">${esc(s.name)}</span><button class="tbl-chip" data-act="table" ${types().length ? '' : 'hidden'}>${icon(cart.type === 'takeaway' ? 'takeaway' : 'dine', 'sm')}${esc(tableLabel())}</button></div>
       <div class="hero">
-        <div class="hero-copy"><h1>See it on your table</h1><p>Open the camera and swipe through today’s dishes in 3D.</p><a class="btn saffron" href="#ar">${icon('camera')}Open camera</a></div>
+        <div class="hero-copy">${on('arView') ? `<h1>See it on your table</h1><p>Open the camera and swipe through today’s dishes in 3D.</p><a class="btn saffron" href="#ar">${icon('camera')}Open camera</a>` : `<h1>${esc(s.tagline || 'Fresh today')}</h1><p>Tap a dish to see it in 3D, then order from your table.</p><a class="btn saffron" href="#cart">${icon('bag')}Your order</a>`}</div>
         <div class="hero-stage"><div class="stage" data-stage="hero" role="img" aria-label="${esc(pick ? pick.name : '')} in 3D"></div></div>
       </div>
     </header>
+    ${noticeBar()}
     <div class="c-tools">
       <div class="row"><label class="search grow">${icon('search')}<input type="search" placeholder="Search dishes" value="${esc(q)}" data-in="q" aria-label="Search dishes"></label>
       <button class="vtoggle" data-act="veg" aria-pressed="${vegOnly}">${vmark(true)}Veg only</button></div>
@@ -134,14 +145,16 @@ const Cust = (() => {
       return `<div class="page-h"><h1>Your order</h1></div><div class="empty">${icon('bag')}<h2>Nothing here yet</h2><p>Add dishes from the menu, or see them on your table first.</p>
         <div class="row" style="justify-content:center;margin-top:14px"><a class="btn" href="#menu">Browse the menu</a><a class="btn ghost" href="#ar">${icon('camera')}Open camera</a></div></div>`;
     }
+    fixType();
     const b = cartBill();
-    const blocked = lines.filter((l) => !status(X().menuById[l.id]).ok);
+    const blocked = lines.filter((l) => !status(X().menuById[l.id]).ok), closed = !on('orderingOpen') || !types().length;
     const rate = s.gstRate;
     return `<div class="page-h"><a class="btn icon quiet sm" href="#menu" aria-label="Back to menu">${icon('back')}</a><h1>Your order</h1></div>
     <div class="c-pad" style="display:grid;gap:14px">
-      <div class="row wrap"><div class="seg" role="group" aria-label="Order type"><button data-type="dine-in" aria-pressed="${cart.type === 'dine-in'}">Dine-in</button><button data-type="takeaway" aria-pressed="${cart.type === 'takeaway'}">Takeaway</button></div>
+      ${noticeBar()}
+      <div class="row wrap"><div class="seg" role="group" aria-label="Order type">${types().map((k) => `<button data-type="${k}" aria-pressed="${cart.type === k}">${k === 'dine-in' ? 'Dine-in' : 'Takeaway'}</button>`).join('')}</div>
         <span class="grow"></span>${cart.type === 'dine-in' ? `<button class="btn quiet sm" data-act="table">${icon('dine', 'sm')}${esc(tableLabel())}</button>` : ''}</div>
-      ${cart.type === 'takeaway' ? `<div class="panel" style="padding:12px 14px"><div style="font-weight:650;margin-bottom:8px">When will you pick it up?</div>
+      ${cart.type === 'takeaway' && on('pickupAhead') ? `<div class="panel" style="padding:12px 14px"><div style="font-weight:650;margin-bottom:8px">When will you pick it up?</div>
         <div class="pills" role="group" aria-label="Pickup time">${[0, 15, 30, 45, 60].map((m) => `<button class="pill" data-pick="${m}" aria-pressed="${(cart.pickup || 0) === m}">${m ? `In ${m} min` : 'As soon as ready'}</button>`).join('')}</div>
         ${cart.pickup ? `<div class="faint" style="font-size:13px;margin-top:8px">The kitchen will time it for about ${D.time12(Date.now() + cart.pickup * 60000)}.</div>` : ''}</div>` : ''}
       <div class="panel">${lines.map((l, i) => {
@@ -166,11 +179,11 @@ const Cust = (() => {
       ${rewardsPanel()}
       <div><h2 style="font-size:17px;margin:4px 0 10px">How would you like to pay?</h2>
       <div class="paymethods" role="radiogroup" aria-label="Payment method">
-        ${pm('upi', 'upi', 'UPI', 'Scan and pay with any UPI app')}
-        ${pm('card', 'card', 'Card', 'Debit or credit card')}
-        ${pm('counter', 'store', 'Pay at counter', 'Cash, UPI or card when you leave')}
+        ${payOn().includes('upi') ? pm('upi', 'upi', 'UPI', 'Scan and pay with any UPI app') : ''}
+        ${payOn().includes('card') ? pm('card', 'card', 'Card', 'Debit or credit card') : ''}
+        ${payOn().includes('counter') ? pm('counter', 'store', 'Pay at counter', 'Cash, UPI or card when you leave') : ''}
       </div></div>
-      <button class="btn saffron lg block placebtn" data-act="place" ${blocked.length ? 'disabled' : ''}>Place order ${D.money(b.total)}</button>
+      <button class="btn saffron lg block placebtn" data-act="place" ${blocked.length || closed ? 'disabled' : ''}>${closed ? 'Ordering is paused' : `Place order ${D.money(b.total)}`}</button>
     </div>`;
   }
   function rewardsPanel() {
@@ -262,21 +275,21 @@ const Cust = (() => {
   function dishSheet(id) {
     const d = X().menuById[id]; if (!d) return;
     let n = 1, note = '';
-    const groups = D.optionGroups(d), picks = {};
+    const groups = groupsFor(d), picks = {};
     groups.forEach((g, gi) => { picks[gi] = g.many ? [] : [0]; });
     const m = modal({
       title: d.name, cls: 'dish-sheet',
-      body: `<div class="dsheet-stage"><div class="stage" data-stage="detail"></div><span class="hint">Drag to turn, pinch to zoom</span><a class="btn white sm" href="#ar" data-view-ar style="position:absolute;top:12px;right:14px;box-shadow:0 2px 8px rgba(62,42,30,.15)">${icon('camera', 'sm')}See it on my table</a></div>
+      body: `<div class="dsheet-stage"><div class="stage" data-stage="detail"></div><span class="hint">Drag to turn, pinch to zoom</span><a class="btn white sm" href="#ar" data-view-ar ${on('arView') ? '' : 'hidden'} style="position:absolute;top:12px;right:14px;box-shadow:0 2px 8px rgba(62,42,30,.15)">${icon('camera', 'sm')}See it on my table</a></div>
         <div style="margin-top:14px" data-info></div>`,
       foot: '',
       onClose: () => { openSheet = null; Viewer.unmount($('[data-stage=detail]', m.el)); mountHero(); },
     });
     openSheet = m;
     // "Goes well with": available dishes from other categories, bestsellers first
-    const pairs = () => S().menu.filter((x) => x.id !== d.id && x.category !== d.category && status(x).ok)
+    const pairs = () => !on('pairings') ? [] : S().menu.filter((x) => x.id !== d.id && x.category !== d.category && status(x).ok)
       .sort((a, b) => ((b.tags || []).includes('Bestseller') - (a.tags || []).includes('Bestseller')) || a.price - b.price).slice(0, 3);
     const draw = () => {
-      const s = status(d), sel = D.resolveOpts(d, picks), unit = d.price + sel.add;
+      const s = status(d), sel = groups.length ? D.resolveOpts(d, picks) : { opts: [], add: 0, r: {} }, unit = d.price + sel.add;
       const pr = pairs();
       $('[data-info]', m.el).innerHTML = `<div class="row" style="align-items:flex-start"><div class="grow"><div class="dish-n" style="font-size:20px">${vmark(d.veg)}<span>${esc(d.name)}</span></div>
           <div class="kv" style="margin-top:6px">${d.kcal ? `<span>${icon('flame', 'sm')}${d.kcal} kcal</span>` : ''}${d.prep ? `<span>${icon('clock', 'sm')}${d.prep} min</span>` : ''}${(d.tags || []).map((t) => `<span class="chip new">${esc(t)}</span>`).join('')}</div></div>
@@ -306,7 +319,7 @@ const Cust = (() => {
       if (e.target.closest('[data-sinc]')) { n = Math.min(20, n + 1); draw(); }
       if (e.target.closest('[data-sdec]')) { n = Math.max(1, n - 1); draw(); }
       if (e.target.closest('[data-sadd]')) {
-        const sel = D.resolveOpts(d, picks);
+        const sel = groups.length ? D.resolveOpts(d, picks) : { opts: [], add: 0, r: {} };
         let okc = 0; for (let k = 0; k < n; k++) if (add(d, 1, note.trim(), sel)) okc++;
         if (okc) { toast(`${okc} × ${d.name} added`); m.close(); }
       }
@@ -321,7 +334,7 @@ const Cust = (() => {
     const n = S().settings.tables || 12;
     const m = modal({
       title: 'Where are you sitting?',
-      body: `<div class="seg" style="margin-bottom:14px"><button data-tt="dine-in" aria-pressed="${cart.type === 'dine-in'}">Dine-in</button><button data-tt="takeaway" aria-pressed="${cart.type === 'takeaway'}">Takeaway</button></div>
+      body: `<div class="seg" style="margin-bottom:14px">${types().map((k) => `<button data-tt="${k}" aria-pressed="${cart.type === k}">${k === 'dine-in' ? 'Dine-in' : 'Takeaway'}</button>`).join('')}</div>
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px" ${cart.type === 'takeaway' ? 'hidden' : ''} data-tables>${Array.from({ length: n }, (_, i) => `<button class="btn ${cart.table === i + 1 ? '' : 'ghost'}" data-t="${i + 1}">${i + 1}</button>`).join('')}</div>
         <p class="faint" style="font-size:13px;margin:12px 0 0">The table number is printed on the QR card at your table.</p>`,
       foot: false,
@@ -354,7 +367,7 @@ const Cust = (() => {
       status: 'new', log: [{ s: 'new', at: now }], use: D.consumption(lines, X().menuById), pay, note: '',
     }, b);
     const ph = D.cleanPhone(cart.phone); if (ph && S().settings.loyalty !== false) { order.phone = ph; if (b.disc) order.beans = Number(S().settings.redeemBeans) || 100; }
-    if (cart.type === 'takeaway' && cart.pickup) order.pickupAt = now + cart.pickup * 60000;
+    if (cart.type === 'takeaway' && cart.pickup && on('pickupAhead')) order.pickupAt = now + cart.pickup * 60000;
     await D.api.putOrder(order);
     cart.lines = []; cart.redeem = false; cart.pickup = 0; saveCart();
     lastSeen[order.id] = 'new';
@@ -372,6 +385,9 @@ const Cust = (() => {
     return true;
   }
   async function place() {
+    fixType();
+    if (!on('orderingOpen') || !types().length) { toast('The café has paused app orders. Please order at the counter.', 'warn'); render(); return; }
+    if (!payOn().includes(payMethod)) { payMethod = payOn()[0]; render(); return; }
     if (!checkBeforePay()) return;
     const total = cartBill().total;
     if (payMethod === 'card') return cardSheet(total);
@@ -468,6 +484,7 @@ const Cust = (() => {
       m.foot.style.flexWrap = 'wrap';
       m.foot.innerHTML = `<button class="btn ghost sm" data-o="counter">${icon('qr', 'sm')}Show at counter</button>
         <button class="btn ghost sm" data-o="bill">${icon('download', 'sm')}Bill</button>
+        <button class="btn ghost sm" data-o="share">${icon('send', 'sm')}Share bill</button>
         <button class="btn ghost sm" data-o="again">${icon('refresh', 'sm')}Order again</button>
         ${unpaid ? `<button class="btn saffron sm" data-o="pay">Pay ${D.money(o.total)}</button>` : ''}`;
     };
@@ -476,6 +493,7 @@ const Cust = (() => {
       const b = e.target.closest('[data-o]'); if (!b) return;
       const o = S().orders.find((x) => x.id === id); if (!o) return;
       if (b.dataset.o === 'counter') counterSheet(o);
+      if (b.dataset.o === 'share') shareSheet(o);
       if (b.dataset.o === 'bill') UI.download(`${o.id}-bill.html`, Invoice.html(o, S().settings), 'text/html');
       if (b.dataset.o === 'again') { let n = 0; for (const l of o.items || []) { const d = X().menuById[l.id]; if (d) for (let k = 0; k < l.qty; k++) if (add(d, 1, l.note || '', l.opts && l.opts.length ? optsSel(d, l.opts) : null)) n++; } if (n) { m.close(); location.hash = 'cart'; } }
       if (b.dataset.o === 'pay') {
@@ -483,6 +501,16 @@ const Cust = (() => {
         mm.el.addEventListener('click', (ev) => { const x = ev.target.closest('[data-pm]'); if (!x) return; mm.close(); if (x.dataset.pm === 'upi') upiSheet(o.total, o); else cardSheet(o.total, o); });
       }
     });
+  }
+  // digital copy of the bill: WhatsApp (to yourself or anyone) or email, with the full GST details
+  function shareSheet(o) {
+    const s = S().settings;
+    const m = modal({ title: 'Share your bill', body: `<p class="muted" style="margin-top:0">Send a copy of bill ${esc(o.id)} with the GST details to WhatsApp or email.</p>
+      <div class="sendbox" style="background:#fff"><div class="row"><input class="in" inputmode="tel" maxlength="14" placeholder="WhatsApp number (or leave empty to pick a chat)" value="${esc(o.phone || cart.phone || '')}" data-sph><a class="btn wa sm" data-swa target="_blank" rel="noopener">${icon('send', 'sm')}WhatsApp</a></div>
+      <div class="row"><input class="in" type="email" placeholder="Your email" data-sem><a class="btn quiet sm" data-smail target="_blank" rel="noopener">${icon('mail', 'sm')}Email</a></div></div>`, foot: false });
+    const ph = $('[data-sph]', m.el), em = $('[data-sem]', m.el), wa = $('[data-swa]', m.el), ml = $('[data-smail]', m.el);
+    const upd = () => { wa.href = Invoice.waLink(o, s, ph.value); ml.href = Invoice.mailLink(o, s, em.value.trim()); };
+    ph.oninput = upd; em.oninput = upd; upd();
   }
   // rebuild a selection from saved option names (for "Order again")
   function optsSel(d, names) {
@@ -555,6 +583,7 @@ const Cust = (() => {
     if (tableNo) { cart.table = tableNo; cart.type = 'dine-in'; saveCart(); }
     const was = view;
     view = v;
+    if (v === 'ar' && !on('arView')) { location.hash = 'menu'; return; }
     if (v === 'ar') {
       if (was !== 'menu' && was !== 'ar' || !$('.cust', root)) { view = 'menu'; render(); view = 'ar'; }
       if (!AR.isOpen()) openAR(pendingStart); else if (pendingStart) { AR.close(); openAR(pendingStart); }
@@ -567,6 +596,8 @@ const Cust = (() => {
   function onData() {
     watchMine();
     if (!root || !root.isConnected || !document.body.classList.contains('c-mode')) return;
+    // a change from the café's Customer app page (switches, message) redraws the whole screen
+    const st = S().settings; if (st !== lastSettings) { const first = !lastSettings; lastSettings = st; if (!first && view === 'menu' && !AR.isOpen()) { render(); if (openSheet && openSheet.refresh) openSheet.refresh(); return; } }
     if (view === 'bills') { if (!openSheet) render(); else { const keep = window.scrollY; render(); window.scrollTo(0, keep); } }
     else if (view === 'cart') render();
     else refreshBits();
@@ -612,5 +643,22 @@ const Invoice = (() => {
       table{width:100%;border-collapse:collapse}td{padding:1px 0;vertical-align:top}td.r{text-align:right;white-space:nowrap}.tot td{font-weight:700;font-size:14px}.small{font-size:11px;color:#444}
       @media print{body{background:#fff;padding:0}.receipt{max-width:none}}</style></head><body>${lines(o, s)}</body></html>`;
   }
-  return { lines, html };
+  // plain-text bill for WhatsApp and email (GST details included, so it works as a digital copy)
+  function text(o, s) {
+    const D = Data, r = (p) => (p / 100).toFixed(2), p = o.pay || {};
+    const parts = D.payParts(o).map((x) => `${{ cash: 'Cash', upi: 'UPI', card: 'Card', counter: 'Counter' }[x.m] || x.m} ${r(x.a)}`).join(' + ');
+    const L = [`*${s.name}*`, s.address, `GSTIN ${s.gstin}  FSSAI ${s.fssai}`, '',
+      `Tax invoice ${o.inv || o.id}`, `Order ${o.id}, ${new Date(o.createdAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })}`,
+      o.table ? `Table ${o.table}` : 'Takeaway', ''];
+    for (const l of o.items || []) L.push(`${l.qty} x ${l.name}${(l.opts || []).length ? ` (${l.opts.join(', ')})` : ''}  ₹${r(Math.round(l.price * 100) * l.qty)}`);
+    L.push('', `Item total ₹${r(o.sub)}`);
+    if (o.disc) L.push(`${o.beans ? 'Rewards discount' : 'Discount'} -₹${r(o.disc)}`);
+    L.push(`Taxable value ₹${r(o.taxable)}`, `CGST ${o.rate / 2}% ₹${r(o.cgst)}`, `SGST ${o.rate / 2}% ₹${r(o.sgst)}`);
+    if (o.round) L.push(`Round off ₹${r(o.round)}`);
+    L.push(`*Total ₹${r(o.total)}*`, `Payment: ${p.status === 'paid' ? parts || 'Paid' : p.status === 'refunded' ? 'Refunded' : 'Not paid yet'}`, '', `SAC ${s.sac || '996331'}. No service charge levied. Thank you!`);
+    return L.filter((x) => x != null).join('\n');
+  }
+  const waLink = (o, s, phone) => { const ph = Data.cleanPhone(phone); return `https://wa.me/${ph ? '91' + ph : ''}?text=${encodeURIComponent(text(o, s))}`; };
+  const mailLink = (o, s, email) => `mailto:${encodeURIComponent(email || '').replace('%40', '@')}?subject=${encodeURIComponent(`${s.name} bill ${o.id}`)}&body=${encodeURIComponent(text(o, s).replace(/\*/g, ''))}`;
+  return { lines, html, text, waLink, mailLink };
 })();

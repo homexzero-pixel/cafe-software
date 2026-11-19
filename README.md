@@ -23,6 +23,20 @@ The build makes three pages from the same source:
 - **Goes well with**: each dish suggests three dishes from other categories, one tap to add.
 - **Kitchen time**: the dashboard shows the average minutes from order to ready today.
 
+## Billing counter (POS)
+
+- **Fast entry**: press `/` to search, type part of a name and press Enter to add the first match; Escape clears.
+- **Customise lines**: each line has Customise (size, milk, add-ons) or Note; "+" repeats that exact line.
+- **Send to kitchen, pay later**: dine-in tickets go to the kitchen board unpaid. When the table has several open bills, **Settle table** takes one payment for all of them.
+- **Split payment**: any mix of cash, UPI and card; the last box fills itself, and reports count each part under its own method.
+- **Rewards at the counter**: enter the guest's phone to earn beans, or redeem them for a discount before GST.
+- **Digital bill**: send the full GST bill on WhatsApp (to the guest's number) or by email from the receipt or from Bills. The bill records that it was sent.
+- **Close the day**: sales, discounts, CGST and SGST, payments by method, unpaid and cancelled bills, and the cash drawer (opening float + cash sales − cash refunds = expected, then count it to see over or short). Saved with a downloadable report.
+
+## Customer app controls (`cafe.html#app`)
+
+Staff switch the customer app live, without an update: app ordering on or paused, dine-in, takeaway, order ahead, UPI / card / pay at counter, customisation, "goes well with", the 3D table view, rewards on or off with their rates, and a message at the top of the menu.
+
 ![Menu](docs/screenshots/menu.jpg) ![Table view](docs/screenshots/table-view-photo.jpg)
 
 ## Quick start
@@ -90,6 +104,10 @@ In the Razorpay dashboard, add the webhook URL `https://<project>.supabase.co/fu
 - [ ] Customise a cappuccino (Large, oat milk, extra shot): price adds ₹135 and the kitchen ticket lists the choices.
 - [ ] Add a phone number, pay; after staff mark it paid, the beans balance goes up. Redeem 100 beans: ₹50 comes off before GST.
 - [ ] Takeaway in 30 min: the ticket shows the pickup time; mark it ready and the number flashes on `cafe.html#board`.
+- [ ] POS: send two dine-in tickets for Table 5, then Settle table with ₹300 cash + the rest on UPI; Reports split the amounts by method.
+- [ ] Receipt: WhatsApp opens a chat to the guest's number with the full GST bill.
+- [ ] Close the day: expected cash = float + cash sales − cash refunds; counting less shows "Short by".
+- [ ] Customer app page: pause ordering and turn off the table view; the guest's phone shows the notice, hides the camera and blocks Place order straight away.
 - [ ] Two phones order at the same moment: order numbers are consecutive with no duplicates.
 - [ ] Reports: GST summary taxable + CGST + SGST matches the bills; CSV export opens in a spreadsheet.
 
@@ -110,3 +128,4 @@ Claude Code reads `CLAUDE.md` for the architecture, data model, billing rules an
 | ![Overview](docs/screenshots/staff-overview.jpg) | ![Kitchen board](docs/screenshots/staff-kitchen.jpg) |
 | ![Billing](docs/screenshots/staff-billing.jpg) | ![GST invoice](docs/screenshots/staff-invoice.jpg) |
 | ![Customise](docs/screenshots/customise.jpg) | ![Pickup screen](docs/screenshots/pickup-screen.jpg) |
+| ![Customer app controls](docs/screenshots/customer-app-controls.jpg) | |

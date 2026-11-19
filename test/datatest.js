@@ -47,3 +47,9 @@ const ro = [{ phone: '9876543210', status: 'served', total: 120000, pay: { statu
   { phone: '9876543210', status: 'served', total: 30000, beans: 100, pay: { status: 'paid' } }, { phone: '9876543210', status: 'cancelled', total: 90000, pay: { status: 'paid' } }];
 const bn = D.beans('+91 98765 43210', ro, D.SETTINGS); assert(bn.earned === 150 && bn.spent === 100 && bn.balance === 50 && bn.pending === 50, 'beans balance');
 const rb = D.bill([{ price: 180, qty: 2 }], { disc: 5000 }); assert(rb.taxable === 31000 && rb.cgst === 775 && rb.total === 32600, 'rewards discount applied before GST');
+// split payments
+const sp = D.payParts({ total: 50000, pay: { method: 'split', parts: [{ m: 'cash', a: 20000 }, { m: 'upi', a: 30000 }] } });
+assert(sp.length === 2 && sp[0].a + sp[1].a === 50000, 'split parts');
+assert(D.payParts({ total: 12300, pay: { method: 'card' } })[0].a === 12300, 'single method is one part');
+const al = D.allocate([{ m: 'cash', a: 30000 }, { m: 'upi', a: 40000 }], [42000, 28000]);
+assert(al[0].length === 2 && al[0][0].a === 30000 && al[0][1].a === 12000 && al[1][0].m === 'upi' && al[1][0].a === 28000, 'settle a table across two bills');
