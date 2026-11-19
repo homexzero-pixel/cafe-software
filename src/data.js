@@ -134,11 +134,11 @@ const Data = (() => {
   /* Staff roles. PINs are kept as salted SHA-256 hashes in settings.staff (a 4-digit PIN is a convenience lock for a shared
      counter, not real security: on Supabase, staff sign in with their own accounts and the database checks roles). */
   const ROLES = {
-    owner: { label: 'Owner', pages: ['overview', 'orders', 'billing', 'bills', 'menu', 'stock', 'reports', 'board', 'app', 'tables', 'team', 'setup'],
+    owner: { label: 'Owner', pages: ['overview', 'orders', 'billing', 'bills', 'menu', 'stock', 'reports', 'board', 'app', 'tables', 'team', 'printers', 'setup'],
       can: ['bill', 'collect', 'cancel', 'cancelPaid', 'refund', 'discountAny', 'dayClose', 'dishEdit', 'dishToggle', 'stockBuy', 'stockCount', 'stockWaste', 'stockEdit', 'settings', 'export'] },
-    cashier: { label: 'Cashier', pages: ['overview', 'orders', 'billing', 'bills', 'menu', 'stock', 'board', 'tables'],
+    cashier: { label: 'Cashier', pages: ['overview', 'orders', 'billing', 'bills', 'menu', 'stock', 'board', 'tables', 'printers'],
       can: ['bill', 'collect', 'cancel', 'dayClose', 'dishToggle', 'stockWaste'] },
-    staff: { label: 'Staff', pages: ['orders', 'board', 'menu', 'stock'],
+    staff: { label: 'Staff', pages: ['orders', 'board', 'menu', 'stock', 'printers'],
       can: ['dishToggle', 'stockWaste'] },
   };
   function sha256(str) {
@@ -168,6 +168,19 @@ const Data = (() => {
   }
   const findByPin = (s, pin) => team(s).find((m) => m.active !== false && m.pinHash === pinHash(pin, s.pinSalt)) || null;
   const can = (role, perm) => !!(ROLES[role] && ROLES[role].can.includes(perm));
+
+  /* Online ordering apps. Their orders are taxed by the app under section 9(5) of the CGST Act (since 1 Jan 2022):
+     the app charges the guest 5% GST and pays it, so the café records these sales without CGST/SGST and keeps them
+     out of its own GST totals and out of its invoice series. */
+  const CHANNELS = { zomato: { label: 'Zomato', code: 'ZO' }, swiggy: { label: 'Swiggy', code: 'SW' }, ondc: { label: 'ONDC', code: 'ON' } };
+  const isEco = (o) => !!(o && o.eco);
+  const whereLabel = (o) => (o.table ? `Table ${o.table}` : o.channel && CHANNELS[o.channel] ? `${CHANNELS[o.channel].label} ${o.type === 'pickup' ? 'pickup' : 'delivery'}` : 'Takeaway');
+  // our order ID for an app order: channel code + the app's order number (not from the invoice counter)
+  function appOrderId(channel, extId, orders) {
+    const code = (CHANNELS[channel] || { code: 'AP' }).code, tail = String(extId).replace(/\W/g, '').slice(-6).toUpperCase() || Date.now().toString(36).slice(-5).toUpperCase();
+    let id = `${code}-${tail}`, k = 2; while ((orders || []).some((o) => o.id === id)) id = `${code}-${tail}-${k++}`;
+    return id;
+  }
 
   /* Payments: a bill is paid by one method, or split ({ method: 'split', parts: [{ m, a }] }, a in paise) */
   function payParts(o) {
@@ -577,7 +590,7 @@ const Data = (() => {
 
   return {
     SETTINGS, CATEGORIES, defaultMenu, defaultStock, money, rupees, compact, NUM, toMin, pad2, fy, dayKey, startOfDay, time12, dateShort, dateLong, hm,
-    bill, computeStock, consumption, dishStatus, optionGroups, resolveOpts, payParts, allocate, ROLES, sha256, pinHash, team, findByPin, can, optionsToText, optionsFromText, CATEGORY_OPTIONS, beans, cleanPhone, inWindow, foodCost, rid, orderIds, sampleOrders,
+    bill, computeStock, consumption, dishStatus, optionGroups, resolveOpts, payParts, allocate, CHANNELS, isEco, whereLabel, appOrderId, ROLES, sha256, pinHash, team, findByPin, can, optionsToText, optionsFromText, CATEGORY_OPTIONS, beans, cleanPhone, inWindow, foodCost, rid, orderIds, sampleOrders,
     state, on, notify, init, api, derived, safeLS, onWriteError: (fn) => { writeErrorHandler = fn; },
   };
 })();

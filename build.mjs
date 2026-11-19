@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = dirname(fileURLToPath(import.meta.url));
 // Order matters: later files use globals defined by earlier ones.
-const order = ['engine.js', 'models.js', 'qr.js', 'data.js', 'ui.js', 'viewer.js', 'ar.js', 'customer.js', 'staff.js', 'app.js'];
+const order = ['engine.js', 'models.js', 'qr.js', 'data.js', 'ui.js', 'printer.js', 'viewer.js', 'ar.js', 'customer.js', 'staff.js', 'app.js'];
 let js = order.map((f) => readFileSync(join(root, 'src', f), 'utf8')).join('\n');
 js = js.replace("if (typeof module !== 'undefined') module.exports = QR;", '');
 if (/<\/script/i.test(js)) throw new Error('A closing script tag inside the JS would break the page');

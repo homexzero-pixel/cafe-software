@@ -1,6 +1,6 @@
 import re, sys, json, pathlib
 root = pathlib.Path(__file__).parent
-order = ['engine.js', 'models.js', 'qr.js', 'data.js', 'ui.js', 'viewer.js', 'ar.js', 'customer.js', 'staff.js', 'app.js']
+order = ['engine.js', 'models.js', 'qr.js', 'data.js', 'ui.js', 'printer.js', 'viewer.js', 'ar.js', 'customer.js', 'staff.js', 'app.js']
 js = '\n'.join((root / 'src' / f).read_text() for f in order)
 js = js.replace("if (typeof module !== 'undefined') module.exports = QR;", '')
 css = (root / 'src' / 'styles.css').read_text()

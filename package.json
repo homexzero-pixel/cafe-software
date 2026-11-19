@@ -2,11 +2,11 @@
   "name": "kaapi-marble-cafe",
   "version": "1.0.0",
   "private": true,
-  "description": "Café software: customer portal with a 3D/AR menu on the table, plus billing, kitchen tickets, recipe-based stock and GST reports.",
+  "description": "Caf\u00e9 software: customer portal with a 3D/AR menu on the table, plus billing, kitchen tickets, recipe-based stock and GST reports.",
   "scripts": {
     "build": "node build.mjs",
     "serve": "npx --yes serve dist",
-    "test": "node test/winding.js && node test/datatest.js",
+    "test": "node test/winding.js && node test/datatest.js && node test/printertest.js",
     "test:qr": "node test/qrtest.js && python3 test/qrdecode.py",
     "test:e2e": "python3 test/e2e_customer2.py && python3 test/e2e_staff.py && python3 test/e2e_photo.py && python3 test/e2e_cloud.py"
   },

@@ -24,6 +24,7 @@ Plain JavaScript (ES2020), no framework and no runtime dependencies. The build i
 | `qr.js` | `QR` | QR encoder, `QR.svg(text)` |
 | `data.js` | `Data` | Defaults (settings, menu, stock), billing math, stock and availability, storage adapters, sample sales |
 | `ui.js` | `UI` | DOM helpers, icons, toasts, dialogs, downloads, audio chime |
+| `printer.js` | `Printer` | ESC/POS encoder, KOT and bill layouts (32 or 48 characters), per-device printer settings, USB / Bluetooth / serial / network-bridge / browser transports |
 | `viewer.js` | `Viewer` | One shared WebGL canvas moved between stages, orbit controller, dish thumbnails |
 | `ar.js` | `AR` | Table view: live camera with gyroscope anchoring, photo of the table, virtual marble table, WebXR hit-test placement on Android Chrome |
 | `customer.js` | `Cust`, `Invoice` | Customer portal screens and the GST invoice |
@@ -31,7 +32,7 @@ Plain JavaScript (ES2020), no framework and no runtime dependencies. The build i
 | `app.js` | | Boot and hash router |
 | `styles.css`, `template.html` | | Styles and page shell |
 
-Routes (hash): customer `#table-N`, `#menu`, `#ar`, `#cart`, `#bills`; café dashboard `#overview`, `#orders`, `#billing`, `#bills`, `#menu`, `#stock`, `#reports`, `#board` (pickup TV), `#app` (customer app switches), `#team` (people, roles, PINs), `#tables`, `#setup` (in demo.html they are prefixed `#staff-`, plus `#welcome`).
+Routes (hash): customer `#table-N`, `#menu`, `#ar`, `#cart`, `#bills`; café dashboard `#overview`, `#orders`, `#billing`, `#bills`, `#menu`, `#stock`, `#reports`, `#board` (pickup TV), `#app` (customer app switches), `#team` (people, roles, PINs), `#printers` (this device's thermal printers), `#tables`, `#setup` (in demo.html they are prefixed `#staff-`, plus `#welcome`).
 
 ## Data model
 
@@ -40,7 +41,7 @@ Document paths: `cafe/settings`, `menu/{id}`, `stock/{id}`, `orders/{id}`, `ledg
 - **Dish**: `name, category, price` (rupees, before GST), `veg, model, kcal, prep, from, to` ("HH:MM" or empty for all day), `desc, tags, active, sort, recipe: [{ing, qty}]` (per serving, in the ingredient's unit), optional `options: [{name, many, choices: [{n, p, r}]}]` (customisation; `p` extra ₹, `r` extra ingredients; without it the category's set in `CATEGORY_OPTIONS` applies, `[]` turns it off).
 - **Ingredient**: `name, unit` (g, ml, pc, slice), `base, baseAt` (counted quantity and when), `reorder, cost` (₹ per unit), `supplier`.
 - **Ledger entry**: `at, ing, type` (purchase, waste, count, or `close` for a day close with its summary in `close`; stock ignores it), `qty` (signed), `cost, note`.
-- **Order**: `id` (KM-1043), `no, inv` (KM/26-27/1043), `createdAt, table, type` (dine-in, takeaway), `source` (portal, pos), `customer, items[]` (each with `opts` names), optional `phone` (rewards), `beans` (redeemed), `pickupAt`, money fields `sub, disc, taxable, cgst, sgst, round, total` (integer paise), `rate, incl, status` (new, preparing, ready, served, cancelled), `log[]`, `use` (ingredient consumption snapshot), `pay {method (cash, upi, card, counter, split), status, ref, last4, parts [{m, a}] for split, group for a settled table, ...}` (read amounts per method with `Data.payParts`), `sent[]` (digital bill sent by WhatsApp or email), `demo` for sample sales.
+- **Order**: `id` (KM-1043), `no, inv` (KM/26-27/1043), `createdAt, table, type` (dine-in, takeaway), `source` (portal, pos), `customer, items[]` (each with `opts` names), optional `phone` (rewards), `beans` (redeemed), `pickupAt`, money fields `sub, disc, taxable, cgst, sgst, round, total` (integer paise), `rate, incl, status` (new, preparing, ready, served, cancelled), `log[]`, `use` (ingredient consumption snapshot), `pay {method (cash, upi, card, counter, split), status, ref, last4, parts [{m, a}] for split, group for a settled table, ...}` (read amounts per method with `Data.payParts`), `sent[]` (digital bill sent by WhatsApp or email), `kotAt, kotBy` (KOT printed), `channel, extId, eco` for Zomato/Swiggy/ONDC orders (`source` is the channel, `type` delivery or pickup, `pay.method` online, `no` and `inv` null, no CGST/SGST), `demo` for sample sales.
 
 ## Rules that matter
 
@@ -48,7 +49,8 @@ Document paths: `cafe/settings`, `menu/{id}`, `stock/{id}`, `orders/{id}`, `ledg
 - **GST**: 5% without ITC for a standalone café (18% option for hotel premises). SAC 996331 prints on bills.
 - **FSSAI**: the 14-digit licence number must print on every bill.
 - **No automatic service charge.** It must stay voluntary, so the software never adds one.
-- **Invoice numbers** are consecutive per financial year (April to March): `PREFIX/YY-YY/NNNN`.
+- **Invoice numbers** are consecutive per financial year (April to March): `PREFIX/YY-YY/NNNN`. App orders don't take one.
+- **App orders (section 9(5))**: Zomato/Swiggy/ONDC charge and pay the GST, so `eco` orders are billed with `Data.bill(lines, { rate: 0 })` and left out of the café's CGST/SGST totals in Reports, the GST CSV and Day close.
 - **Stock is derived, not decremented**: stock = `base` (at `baseAt`) + ledger entries after `baseAt` − `use` of non-cancelled orders created at or after `baseAt`. A stock count resets `base` and `baseAt`. This avoids lost updates when several devices order at once.
 - **Roles** (`Data.ROLES`: pages and permissions per role) gate the sidebar, pages and actions in `staff.js` through `canDo(perm)` and `allowed(page)`. Team members live in `settings.staff` `[{id, name, role, pinHash, active}]` (SHA-256 of `salt:pin`; with no team yet, `Data.team()` returns one owner using the old `settings.pin`). Restricted actions go through `guarded(perm, what, fn)`, which asks for an owner PIN. Orders record `by` and `approvedBy`; `settings.cashierMaxDisc` is the cashier's discount limit in %.
 - **Customer app switches** live in settings (`orderingOpen, dineIn, takeaway, pickupAhead, payUpi, payCard, payCounter, customise, pairings, arView, loyalty, notice`), edited on `#app`; `customer.js` reads them through `on(k)` and redraws when settings change.
@@ -77,7 +79,7 @@ Document paths: `cafe/settings`, `menu/{id}`, `stock/{id}`, `orders/{id}`, `ledg
 1. Move customer names and phone numbers out of the publicly readable orders table (Supabase), and keep PIN hashes out of public settings.
 2. Razorpay Checkout in the portal (the webhook is ready in `supabase/functions/razorpay-webhook`). The card form is test mode only (4111 1111 1111 1111 passes, 4000 0000 0000 0002 is declined).
 3. Real dish scans: upload a GLB per dish (with a USDZ for iPhone Quick Look) and load it with a glTF loader, keeping the procedural models as fallback.
-4. Thermal printer support (ESC/POS) for KOTs and bills, offline mode (PWA), multiple outlets.
+4. Kitchen stations (route items to separate printers by category), offline mode (PWA), multiple outlets, accept/reject and prep-time replies back to the ordering apps.
 5. Replace the placeholder GSTIN, FSSAI number, UPI ID and address in `SETTINGS` (`data.js`) or in Setup.
 
 `DESIGN.md` records the visual direction: coffee brown and caramel on warm white, a marble-table motif, Yatra One for the wordmark and Anek Latin for the interface.

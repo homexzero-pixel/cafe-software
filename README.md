@@ -33,7 +33,30 @@ The build makes three pages from the same source:
 - **Digital bill**: send the full GST bill on WhatsApp (to the guest's number) or by email from the receipt or from Bills. The bill records that it was sent.
 - **Close the day**: sales, discounts, CGST and SGST, payments by method, unpaid and cancelled bills, and the cash drawer (opening float + cash sales − cash refunds = expected, then count it to see over or short). Saved with a downloadable report.
 
-## Team and roles (`cafe.html#team`)
+## Thermal printers (`cafe.html#printers`)
+
+Kitchen tickets (KOT) and bills print on ESC/POS thermal printers, 58 mm or 80 mm. Each device sets up its own bill printer and kitchen printer:
+
+| Connection | Works in | Notes |
+|---|---|---|
+| USB | Chrome or Edge on Android, Mac, Linux, ChromeOS | WebUSB; on Windows the vendor driver usually holds the printer, so use Network or the print dialog |
+| Bluetooth | Chrome on Android, Mac, Windows | Bluetooth LE printers; not on iPhone or iPad |
+| Serial | Chrome or Edge on computers | USB-serial and RS-232 printers |
+| Network (LAN / Wi-Fi) | Any device | Through the print bridge, below |
+| Browser print dialog | Any browser | Prints the same 48 or 32 character layout |
+
+- **Automatic printing**: one device (kitchen or counter) prints a KOT for every new order, from the customer app, the counter or Zomato/Swiggy. Each order is marked once its KOT prints, so a second device won't print it again. The counter device can print the bill after every payment and open the cash drawer on cash sales.
+- **Network printers**: browsers can't open port 9100, so run the bridge on any always-on computer in the café: `node tools/print-bridge.mjs` (add `HOST=0.0.0.0` so tablets on the Wi-Fi can use it). It forwards only to private network addresses.
+- Bills print GSTIN, FSSAI, invoice number, CGST/SGST, SAC and "No service charge"; a UPI QR prints on unpaid bills. `₹` prints as `Rs.` because thermal code pages don't have it.
+- USB, Bluetooth and serial need HTTPS or localhost and Chrome/Edge. They don't work inside the Claude preview; use your own hosting.
+
+## Zomato, Swiggy and ONDC orders
+
+Online orders land in the same system as everything else: they appear on the kitchen board with a Zomato or Swiggy tag, print a KOT automatically, take stock off by recipe and show up in reports.
+
+- **Typed in at the counter**: on Billing, switch "Counter" to Zomato or Swiggy, tap the dishes, enter the app's order number and press "Accept and send to kitchen".
+- **Automatically**: Zomato and Swiggy send orders to POS systems through their integration partners (Zomato's POS developer platform, or middleware such as UrbanPiper). Point that partner's webhook at `supabase/functions/online-orders` (deploy steps in the file). It accepts a simple JSON format and UrbanPiper-style payloads, matches dishes by ID or name, ignores duplicates and inserts the order.
+- **GST**: since 1 January 2022 the app charges and pays the 5% GST on restaurant orders it takes (section 9(5) of the CGST Act). So app orders carry no café CGST/SGST and take no number from the café's invoice series (their IDs look like `ZO-234567`). Reports and the GST CSV keep them apart from the café's own taxable value, listed as supplies through e-commerce operators. Check the return tables with your accountant.
 
 Everyone signs in with their own 4-digit PIN (the first sign-in is the starting owner, PIN 1234; add your team and change it). The sidebar shows only what each role may use, and every bill, payment, cancellation and day close records who did it.
 
@@ -123,6 +146,8 @@ In the Razorpay dashboard, add the webhook URL `https://<project>.supabase.co/fu
 - [ ] Close the day: expected cash = float + cash sales − cash refunds; counting less shows "Short by".
 - [ ] Customer app page: pause ordering and turn off the table view; the guest's phone shows the notice, hides the camera and blocks Place order straight away.
 - [ ] Team: add a cashier and a staff member. The cashier can't open Reports or Setup; a 25% discount asks for an owner PIN and the bill shows who approved it. Staff see only Orders, Menu, Stock and the pickup screen.
+- [ ] Printers: choose Network, enter the printer IP, run the print bridge, Test print. Turn on automatic KOTs: a guest order prints its KOT without a tap; a cash sale prints the bill and opens the drawer.
+- [ ] Zomato order typed in at Billing: shows on the kitchen board with a Zomato tag, prints a KOT, has no CGST/SGST, and Reports lists it under ordering apps.
 - [ ] Two phones order at the same moment: order numbers are consecutive with no duplicates.
 - [ ] Reports: GST summary taxable + CGST + SGST matches the bills; CSV export opens in a spreadsheet.
 
@@ -144,3 +169,4 @@ Claude Code reads `CLAUDE.md` for the architecture, data model, billing rules an
 | ![Billing](docs/screenshots/staff-billing.jpg) | ![GST invoice](docs/screenshots/staff-invoice.jpg) |
 | ![Customise](docs/screenshots/customise.jpg) | ![Pickup screen](docs/screenshots/pickup-screen.jpg) |
 | ![Customer app controls](docs/screenshots/customer-app-controls.jpg) | ![Team and roles](docs/screenshots/staff-team.jpg) |
+| ![Printers](docs/screenshots/staff-printers.jpg) | ![Zomato order at the counter](docs/screenshots/staff-zomato-order.jpg) |

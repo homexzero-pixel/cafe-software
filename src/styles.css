@@ -523,3 +523,14 @@ button.chip:hover{background:var(--brand-t2)}
 .whoami b{color:#fff}
 .tbl.perm td:not(:first-child),.tbl.perm th:not(:first-child){text-align:center;width:64px}
 .tbl.perm .ic{color:var(--leaf)}
+
+/* printers and app orders */
+pre.thermal{font-family:var(--f-mono);font-size:12px;line-height:1.35;background:#fff;color:#111;border:1px solid var(--line);border-radius:6px;padding:12px 10px;margin:0;max-width:100%;overflow:auto;white-space:pre;box-shadow:0 6px 18px rgba(43,31,23,.08)}
+#print-area pre.thermal{border:0;box-shadow:none;font-size:11px}
+.prstatus{font-size:13.5px;color:var(--ink-2)}
+.prstatus.on{color:var(--leaf);font-weight:600}
+.chip.app{font-weight:700}
+.chip.app.zomato{background:#FCE4E6;color:#B3202E}
+.chip.app.swiggy{background:#FFEBD9;color:#B04E00}
+.chseg{display:flex;width:100%}
+.chseg button{flex:1}

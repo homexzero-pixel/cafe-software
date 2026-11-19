@@ -4,10 +4,10 @@ const Staff = (() => {
   const { $, $$, esc, icon, vmark, toast, modal, confirmBox } = UI;
   const D = Data;
   const S = () => D.state, X = () => D.derived();
-  const C = { upi: '#8B5A3C', card: '#D59A55', cash: '#4E8A5B', bar: '#8B5A3C' };
+  const C = { upi: '#8B5A3C', card: '#D59A55', cash: '#4E8A5B', online: '#C0623A', bar: '#8B5A3C' };
   let root = null, page = 'overview', sideOpen = false, soundOn = false, ticker = 0, pinBuf = '';
   const seen = new Set(); let primed = false;
-  const pos = { lines: [], type: 'dine-in', table: '', disc: '', discMode: 'pct', cat: 'All', q: '', ref: null, phone: '', redeem: false };
+  const pos = { lines: [], type: 'dine-in', table: '', disc: '', discMode: 'pct', cat: 'All', q: '', ref: null, phone: '', redeem: false, channel: '', ext: '' };
   const bf = { range: 'today', status: 'all', q: '' }, mf = { q: '', cat: 'All' }, sf = { tab: 'items', q: '' }, rf = { range: '7d' }, kf = { type: 'all' };
   // who is signed in on this device: a team member id (PIN), or the Supabase account
   let meId = null, pinFails = 0, pinWaitUntil = 0;
@@ -15,7 +15,7 @@ const Staff = (() => {
 
   const PAGES = [
     ['overview', 'home', 'Overview'], ['orders', 'bell', 'Orders'], ['billing', 'register', 'Billing'], ['bills', 'receipt', 'Bills'],
-    ['menu', 'utensils', 'Menu'], ['stock', 'box', 'Stock'], ['reports', 'chart', 'Reports'], ['board', 'tv', 'Pickup screen'], ['app', 'bag', 'Customer app'], ['team', 'user', 'Team'], ['tables', 'qr', 'Tables & QR'], ['setup', 'sliders', 'Setup'],
+    ['menu', 'utensils', 'Menu'], ['stock', 'box', 'Stock'], ['reports', 'chart', 'Reports'], ['board', 'tv', 'Pickup screen'], ['app', 'bag', 'Customer app'], ['team', 'user', 'Team'], ['printers', 'print', 'Printers'], ['tables', 'qr', 'Tables & QR'], ['setup', 'sliders', 'Setup'],
   ];
   const SPLIT = window.KM_APP === 'cafe';
   // in the standalone dashboard (cafe.html) routes are #overview, #orders...; in the combined demo they are #staff, #staff-orders...
@@ -121,7 +121,7 @@ const Staff = (() => {
     if (!allowed(page)) { page = D.ROLES[me().role].pages[0]; try { history.replaceState(null, '', href(page)); } catch (e) { /* ignore */ } }
     const y = window.scrollY;
     if (page === 'board') { root.innerHTML = board(); return; }
-    const body = { team: teamPage, app: appControls, overview: overview, orders: orders, billing: billing, bills: bills, menu: menuPage, stock: stockPage, reports: reports, tables: tables, setup: setup }[page] || overview;
+    const body = { printers: printersPage, team: teamPage, app: appControls, overview: overview, orders: orders, billing: billing, bills: bills, menu: menuPage, stock: stockPage, reports: reports, tables: tables, setup: setup }[page] || overview;
     root.innerHTML = `<div class="staff">
       <div class="mtop"><button class="btn icon sm quiet" data-a="side" aria-label="Open navigation" style="background:rgba(255,255,255,.1);color:#fff">${icon('menu')}</button><span class="plate">${esc(S().settings.name)}</span></div>
       ${side()}<main class="main" id="smain">${S().ready ? body() : `<div class="empty">${icon('clock')}<h2>Loading café data</h2></div>`}</main></div>`;
@@ -220,7 +220,7 @@ const Staff = (() => {
     const top = {}; for (const o of today) for (const l of o.items || []) top[l.name] = (top[l.name] || 0) + l.qty;
     const topRows = Object.entries(top).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([l, v]) => ({ l, v }));
     const paid = today.filter((o) => o.pay && o.pay.status === 'paid');
-    const pay = ['upi', 'card', 'cash'].map((k) => ({ l: { upi: 'UPI', card: 'Card', cash: 'Cash' }[k], c: C[k], v: paid.reduce((a, o) => a + D.payParts(o).filter((p) => p.m === k).reduce((x, p) => x + p.a, 0), 0) }));
+    const pay = ['upi', 'card', 'cash', 'online'].map((k) => ({ l: { upi: 'UPI', card: 'Card', cash: 'Cash', online: 'Apps' }[k], c: C[k], v: paid.reduce((a, o) => a + D.payParts(o).filter((p) => p.m === k).reduce((x, p) => x + p.a, 0), 0) }));
     const attn = [];
     for (const o of up.slice(0, 5)) attn.push(`<button data-bill="${esc(o.id)}"><span class="ico ${o.pay.status === 'pending' ? 'warn' : 'info'}">${icon(o.pay.status === 'pending' ? 'upi' : 'receipt')}</span><span><span class="t">${esc(o.id)} ${o.pay.status === 'pending' ? 'UPI to confirm' : 'not paid'}</span><br><span class="s">${o.table ? 'Table ' + o.table : 'Takeaway'}, ${D.money(o.total)}, ${UI.ago(o.createdAt)} ago</span></span></button>`);
     for (const s of stockIssues().slice(0, 6)) attn.push(`<a href="${href('stock')}"><span class="ico ${s.state === 'out' ? 'bad' : 'warn'}">${icon('box')}</span><span><span class="t">${esc(s.name)} ${s.state === 'out' ? 'out of stock' : 'running low'}</span><br><span class="s">${fmtQty(Math.max(0, s.qty), s.unit)} left, reorder at ${fmtQty(s.reorder, s.unit)}</span></span></a>`);
@@ -244,19 +244,19 @@ const Staff = (() => {
     const next = { new: ['preparing', 'Start preparing'], preparing: ['ready', 'Mark ready'], ready: ['served', 'Served'] }[o.status];
     const fresh = o.status === 'new' && Date.now() - o.createdAt < 120000;
     return `<article class="kot${fresh ? ' fresh' : ''}" aria-label="Order ${esc(o.id)}">
-      <div class="hd"><span class="id">${esc(o.id)}</span><span class="where">${o.table ? 'Table ' + o.table : 'Takeaway'}</span>${o.pickupAt ? `<span class="pick">Pickup ${D.time12(o.pickupAt)}</span>` : ''}<span class="age" data-age="${o.createdAt}">${UI.mmss(o.createdAt)}</span></div>
+      <div class="hd"><span class="id">${esc(o.id)}</span><span class="where">${esc(D.whereLabel(o))}</span>${o.pickupAt ? `<span class="pick">Pickup ${D.time12(o.pickupAt)}</span>` : ''}<span class="age" data-age="${o.createdAt}">${UI.mmss(o.createdAt)}</span></div>
       <ul>${(o.items || []).map((l) => `<li><b>${l.qty}×</b><span>${esc(l.name)}${(l.opts || []).length ? `<span class="n opts">${esc(l.opts.join(', '))}</span>` : ''}${l.note ? `<span class="n">${esc(l.note)}</span>` : ''}</span></li>`).join('')}</ul>
-      <div class="ft">${payc}<span class="chip">${o.source === 'portal' ? 'Portal' : 'Counter'}</span>
-        <button class="btn xs ghost" data-kot="${esc(o.id)}" aria-label="Kitchen ticket">${icon(UI.canPrint() ? 'print' : 'download', 'sm')}KOT</button>
+      <div class="ft">${payc}${o.channel ? `<span class="chip app ${esc(o.channel)}">${esc(D.CHANNELS[o.channel].label)}${o.extId ? ' ' + esc(String(o.extId).slice(-6)) : ''}</span>` : `<span class="chip">${o.source === 'portal' ? 'Portal' : 'Counter'}</span>`}
+        <button class="btn xs ghost" data-kot="${esc(o.id)}" aria-label="Print kitchen ticket">${icon(Printer.ready(Printer.kotSlot()) || UI.canPrint() ? 'print' : 'download', 'sm')}KOT${o.kotAt ? ' again' : ''}</button>
         ${canDo('cancel') ? `<button class="btn xs danger ghost" data-cancel="${esc(o.id)}">Cancel</button>` : ''}
         ${next ? `<button class="btn sm ${o.status === 'new' ? 'saffron' : ''}" data-next="${esc(o.id)}" data-to="${next[0]}">${next[1]}</button>` : ''}</div></article>`;
   }
   function orders() {
-    const list = S().orders.filter((o) => ['new', 'preparing', 'ready'].includes(o.status) && (kf.type === 'all' || o.type === kf.type)).sort((a, b) => a.createdAt - b.createdAt);
+    const list = S().orders.filter((o) => ['new', 'preparing', 'ready'].includes(o.status) && (kf.type === 'all' || (kf.type === 'apps' ? !!o.channel : o.type === kf.type))).sort((a, b) => a.createdAt - b.createdAt);
     const lane = (k, t) => { const l = list.filter((o) => o.status === k); return `<section class="lane" aria-label="${t}"><h2>${t}<span class="count">${l.length}</span></h2>${l.length ? l.map(kotCard).join('') : `<div class="none">${k === 'new' ? 'New orders appear here the moment they are placed.' : 'Nothing here.'}</div>`}</section>`; };
     const served = S().orders.filter((o) => o.status === 'served' && o.createdAt >= D.startOfDay()).slice(0, 8);
-    return head('Orders', 'Kitchen order tickets from the customer portal and the billing counter, live.',
-      `<div class="seg" role="group" aria-label="Order type">${[['all', 'All'], ['dine-in', 'Dine-in'], ['takeaway', 'Takeaway']].map(([k, l]) => `<button data-kf="${k}" aria-pressed="${kf.type === k}">${l}</button>`).join('')}</div>
+    return head('Orders', 'Kitchen order tickets from the customer app, the counter and Zomato or Swiggy, live.',
+      `<div class="seg" role="group" aria-label="Order type">${[['all', 'All'], ['dine-in', 'Dine-in'], ['takeaway', 'Takeaway'], ['apps', 'Apps']].map(([k, l]) => `<button data-kf="${k}" aria-pressed="${kf.type === k}">${l}</button>`).join('')}</div>
        <button class="btn ghost sm" data-a="sound" aria-pressed="${soundOn}">${icon(soundOn ? 'sound' : 'mute', 'sm')}${soundOn ? 'Sound on' : 'Sound off'}</button>`) +
       `<div class="board">${lane('new', 'New')}${lane('preparing', 'Preparing')}${lane('ready', 'Ready to serve')}</div>
       ${served.length ? `<div class="box" style="margin-top:14px"><h2>Served today <span class="faint">Latest ${served.length}</span></h2><div class="row wrap">${served.map((o) => `<button class="chip" data-bill="${esc(o.id)}">${esc(o.id)}, ${o.table ? 'T' + o.table : 'TA'}, ${D.time12(o.createdAt)}</button>`).join('')}</div></div>` : ''}`;
@@ -279,7 +279,21 @@ const Staff = (() => {
   }
   function kotText(o) {
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>KOT ${esc(o.id)}</title><style>body{font-family:ui-monospace,Menlo,monospace;font-size:14px;max-width:300px;margin:10px auto}h1{font-size:20px;margin:0}hr{border:0;border-top:1px dashed #000}li{margin:4px 0}small{display:block;color:#444}</style></head><body>
-      <h1>KOT ${esc(o.id)}</h1><div>${o.table ? 'Table ' + o.table : 'Takeaway'}, ${new Date(o.createdAt).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })}</div><hr><ul style="padding-left:18px">${(o.items || []).map((l) => `<li><b>${l.qty} x ${esc(l.name)}</b>${(l.opts || []).length ? `<br><small>${esc(l.opts.join(', '))}</small>` : ''}${l.note ? `<br><small>${esc(l.note)}</small>` : ''}</li>`).join('')}</ul><hr></body></html>`;
+      <h1>KOT ${esc(o.id)}</h1><div>${esc(D.whereLabel(o))}, ${new Date(o.createdAt).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })}</div><hr><ul style="padding-left:18px">${(o.items || []).map((l) => `<li><b>${l.qty} x ${esc(l.name)}</b>${(l.opts || []).length ? `<br><small>${esc(l.opts.join(', '))}</small>` : ''}${l.note ? `<br><small>${esc(l.note)}</small>` : ''}</li>`).join('')}</ul><hr></body></html>`;
+  }
+  // print a KOT or bill on this device's thermal printer; without one, use the browser's print dialog or a download
+  async function printKotFor(o, reprint) {
+    try { if (await Printer.printKot(o, reprint)) { toast(`KOT ${o.id} printed`, 'ok', 1500); return true; } } catch (e) { toast(`Kitchen printer: ${e.message || 'could not print'}`, 'bad', 4000); return false; }
+    if (UI.canPrint()) printHtml(null, kotText(o).replace(/^[\s\S]*<body>|<\/body>[\s\S]*$/g, '')); else UI.download(`KOT-${o.id}.html`, kotText(o), 'text/html');
+    return true;
+  }
+  async function printBillFor(list, extra = {}) {
+    list = Array.isArray(list) ? list : [list];
+    try { let any = false; for (const o of list) any = (await Printer.printBill(o, S().settings, extra)) || any; if (any) { toast(list.length > 1 ? 'Bills printed' : `Bill ${list[0].id} printed`, 'ok', 1500); return true; } }
+    catch (e) { toast(`Bill printer: ${e.message || 'could not print'}`, 'bad', 4000); return false; }
+    if (extra.auto) return false;
+    if (UI.canPrint()) printHtml(null, list.map((o) => Invoice.lines(o, S().settings)).join('')); else UI.download(`${list[0].id}-bill.html`, Invoice.html(list[0], S().settings), 'text/html');
+    return true;
   }
   function printHtml(html, inner) {
     let area = $('#print-area'); if (!area) { area = document.createElement('div'); area.id = 'print-area'; document.body.appendChild(area); }
@@ -289,7 +303,7 @@ const Staff = (() => {
   }
 
   /* ---------------- billing (POS) ---------------- */
-  const PM = { cash: 'Cash', upi: 'UPI', card: 'Card', split: 'Split', counter: 'Counter' };
+  const PM = { cash: 'Cash', upi: 'UPI', card: 'Card', split: 'Split', counter: 'Counter', online: 'Paid on app' };
   const posTiles = () => { const ql = pos.q.trim().toLowerCase(); return S().menu.filter((d) => (pos.cat === 'All' || d.category === pos.cat) && (!ql || d.name.toLowerCase().includes(ql))); };
   // unpaid dine-in bills from today, grouped by table: the running tab
   const openTabs = () => {
@@ -302,7 +316,7 @@ const Staff = (() => {
     const waiting = unpaidOrders(), tabs = openTabs();
     const multi = Object.entries(tabs).filter(([, l]) => l.length > 1);
     const inTab = new Set(multi.flatMap(([, l]) => l.map((o) => o.id)));
-    return head('Billing', 'Tap a dish to add it, or type and press Enter. Press / to search.', canDo('dayClose') ? `<button class="btn ghost" data-a="zreport">${icon('cash')}Close the day</button>` : '') +
+    return head('Billing', 'Tap a dish to add it, or type and press Enter. Press / to search.', (Printer.ready('bill') && Printer.cfg.bill.drawer ? `<button class="btn ghost" data-a="drawer">${icon('cash')}Open drawer</button>` : '') + (canDo('dayClose') ? `<button class="btn ghost" data-a="zreport">${icon('receipt')}Close the day</button>` : '')) +
       (waiting.length ? `<div class="box" style="margin-bottom:14px"><h2>${icon('receipt')}Waiting for payment <span class="faint">${waiting.length} bill${waiting.length > 1 ? 's' : ''}, ${D.money(sumBy(waiting, (o) => o.total))}</span></h2>
         <div class="row wrap">${multi.map(([t, l]) => `<button class="btn saffron sm" data-psettle="${t}">${icon('dine', 'sm')}Table ${t}: ${l.length} bills, ${D.money(sumBy(l, (o) => o.total))}. Settle</button>`).join('')}
         ${waiting.filter((o) => !inTab.has(o.id)).map((o) => `<button class="btn ${o.pay.status === 'pending' ? 'saffron' : 'ghost'} sm" data-collect="${esc(o.id)}">${esc(o.id)}, ${o.table ? 'T' + o.table : 'TA'}, ${D.money(o.total)}${o.pay.status === 'pending' ? ', UPI sent' : ''}</button>`).join('')}</div></div>` : '') +
@@ -336,7 +350,18 @@ const Staff = (() => {
     const lines = posLines(), b = posBill(), n = S().settings.tables || 12, st = S().settings;
     const tab = pos.type === 'dine-in' && pos.table ? openTabs()[+pos.table] || [] : [];
     const rw = posRewards(), need = Number(st.redeemBeans) || 100;
-    return `<div class="row" style="margin-bottom:10px"><h2 style="margin:0">Current bill</h2><span class="grow"></span>${lines.length ? `<button class="btn xs ghost" data-a="pclear">Clear</button>` : ''}</div>
+    const chSeg = `<div class="seg chseg" role="group" aria-label="Order from" style="margin-bottom:10px">${[['', 'Counter'], ...Object.entries(D.CHANNELS).filter(([k]) => k !== 'ondc').map(([k, c]) => [k, c.label])].map(([k, l]) => `<button data-pch="${k}" aria-pressed="${pos.channel === k}">${l}</button>`).join('')}</div>`;
+    if (pos.channel) {
+      const ch = D.CHANNELS[pos.channel], ab = D.bill(lines, { rate: 0 });
+      return `<div class="row" style="margin-bottom:10px"><h2 style="margin:0">${esc(ch.label)} order</h2><span class="grow"></span>${lines.length ? `<button class="btn xs ghost" data-a="pclear">Clear</button>` : ''}</div>${chSeg}
+        <label class="field"><span>${esc(ch.label)} order number</span><input class="in" data-pext value="${esc(pos.ext)}" placeholder="As shown on the ${esc(ch.label)} tablet" maxlength="24"></label>
+        <div class="lines" style="margin-top:8px">${lines.length ? lines.map((l, i) => `<div class="tline"><div><div class="nm">${esc(l.name)}</div>${(l.opts || []).length ? `<div class="sm opts">${esc(l.opts.join(', '))}</div>` : ''}${l.note ? `<div class="sm" style="color:var(--warn)">${esc(l.note)}</div>` : ''}<div class="sm money">${D.rupees(l.price)} <button class="linkbtn" data-pedit="${i}">${D.optionGroups(X().menuById[l.id]).length ? 'Customise' : 'Note'}</button></div></div>
+          <div class="mini-step"><button data-pdec="${i}" aria-label="One less">${icon('minus', 'sm')}</button><span>${l.qty}</span><button data-pinc="${i}" aria-label="One more">${icon('plus', 'sm')}</button></div><span class="amt">${D.money(Math.round(l.price * 100) * l.qty)}</span></div>`).join('') : '<p class="muted" style="margin:14px 0">Tap the dishes in the app order.</p>'}</div>
+        <table class="sumtbl" style="margin-top:10px"><tbody><tr class="total"><td>Order value</td><td>${D.money(ab.total)}</td></tr></tbody></table>
+        <div class="note-line">${icon('info', 'sm')}<span>Paid on ${esc(ch.label)}. ${esc(ch.label)} charges the guest GST and pays it (section 9(5)), so this order carries no café GST and no invoice number.</span></div>
+        <button class="btn saffron block lg" data-a="papp" ${lines.length ? '' : 'disabled'}>${icon('bell')}Accept and send to kitchen</button>`;
+    }
+    return `<div class="row" style="margin-bottom:10px"><h2 style="margin:0">Current bill</h2><span class="grow"></span>${lines.length ? `<button class="btn xs ghost" data-a="pclear">Clear</button>` : ''}</div>${chSeg}
       <div class="row wrap" style="margin-bottom:8px"><div class="seg">${[['dine-in', 'Dine-in'], ['takeaway', 'Takeaway']].map(([k, l]) => `<button data-pt="${k}" aria-pressed="${pos.type === k}">${l}</button>`).join('')}</div>
       ${pos.type === 'dine-in' ? `<select class="in" data-ptable style="width:auto;min-height:36px" aria-label="Table"><option value="">Table</option>${Array.from({ length: n }, (_, i) => `<option ${+pos.table === i + 1 ? 'selected' : ''}>${i + 1}</option>`).join('')}</select>` : ''}</div>
       ${tab.length ? `<div class="tabnote">${icon('receipt', 'sm')}<span class="grow">Table ${esc(pos.table)} has ${tab.length} unpaid bill${tab.length > 1 ? 's' : ''}, ${D.money(sumBy(tab, (o) => o.total))}</span><button class="btn xs" data-psettle="${esc(pos.table)}">Settle table</button></div>` : ''}
@@ -489,11 +514,24 @@ const Staff = (() => {
     if (!(await posReady())) return;
     const b = posBill(), tmpRef = (S().settings.prefix || 'KM') + 'P' + Date.now().toString(36).toUpperCase().slice(-5);
     payDialog(method, b.total, tmpRef, async (pay) => {
-      try { const order = await newOrderFromTicket(pay); pos.table = ''; refreshTicket(); receiptDialog([order], pay.change); }
+      try { const order = await newOrderFromTicket(pay); pos.table = ''; refreshTicket(); receiptDialog([order], pay.change, { sale: true }); }
       catch (e) { toast('Could not save the bill. Try again.', 'bad'); }
     });
   }
   // dine-in: the kitchen gets the ticket now, the table pays at the end (Settle table)
+  // an order from Zomato or Swiggy typed in from the app's tablet (or received by the webhook): paid on the app, GST paid by the app
+  async function posAppOrder() {
+    const lines = posLines(); if (!lines.length) return;
+    const ch = pos.channel, ext = pos.ext.trim();
+    if (!ext) { toast(`Enter the ${D.CHANNELS[ch].label} order number`, 'warn'); const i = $('[data-pext]', root); if (i) i.focus(); return; }
+    if (S().orders.some((o) => o.channel === ch && String(o.extId) === ext)) { toast(`${D.CHANNELS[ch].label} order ${ext} is already in`, 'warn'); return; }
+    const now = Date.now(), b = D.bill(lines, { rate: 0 });
+    const order = Object.assign({ id: D.appOrderId(ch, ext, S().orders), no: null, inv: null, createdAt: now, table: null, type: 'delivery', source: ch, channel: ch, extId: ext, eco: true, customer: null,
+      items: lines.map((l) => ({ id: l.id, name: l.name, price: l.price, qty: l.qty, note: l.note || '', veg: l.veg, model: l.model, opts: l.opts || [] })), status: 'new', log: [{ s: 'new', at: now, by: who() }],
+      use: D.consumption(lines, X().menuById), pay: { method: 'online', status: 'paid', channel: ch, at: now, by: who() }, note: '', by: who() }, b, { ecoRate: S().settings.gstRate });
+    try { await D.api.putOrder(order); Object.assign(pos, { lines: [], ext: '' }); refreshTicket(); toast(`${order.id} sent to the kitchen`); }
+    catch (e) { toast('Could not save the order. Try again.', 'bad'); }
+  }
   async function posSendKot() {
     if (!(await posReady())) return;
     try { const o = await newOrderFromTicket({ method: 'counter', status: 'unpaid' }); refreshTicket(); toast(`${o.id} sent to the kitchen for Table ${o.table}`); render(); }
@@ -517,7 +555,7 @@ const Staff = (() => {
             if (i !== list.length - 1) { delete p.change; delete p.received; }
             await D.api.patchOrder(list[i].id, { pay: p }); done.push(Object.assign({}, list[i], { pay: p }));
           }
-          toast(`Table ${t} settled`); receiptDialog(done, pay.change);
+          toast(`Table ${t} settled`); receiptDialog(done, pay.change, { sale: true });
         } catch (er) { toast('Could not save every payment. Check Bills and try again.', 'bad'); }
       });
     });
@@ -534,20 +572,21 @@ const Staff = (() => {
   }
   function chooseCollect(o) {
     const m = modal({ title: `Collect ${D.money(o.total)} for ${o.id}`, body: `<div class="paybtns four">${['cash', 'upi', 'card', 'split'].map((k) => `<button class="btn" data-cm="${k}">${icon(k === 'split' ? 'sliders' : k)}${PM[k]}</button>`).join('')}</div>`, foot: false });
-    m.el.addEventListener('click', (e) => { const b = e.target.closest('[data-cm]'); if (!b) return; m.close(); payDialog(b.dataset.cm, o.total, o.id, async (pay) => { await D.api.patchOrder(o.id, { pay }); toast(`${o.id} paid`); receiptDialog([Object.assign({}, o, { pay })], pay.change); }); });
+    m.el.addEventListener('click', (e) => { const b = e.target.closest('[data-cm]'); if (!b) return; m.close(); payDialog(b.dataset.cm, o.total, o.id, async (pay) => { await D.api.patchOrder(o.id, { pay }); toast(`${o.id} paid`); receiptDialog([Object.assign({}, o, { pay })], pay.change, { sale: true }); }); });
   }
-  function receiptDialog(list, change) {
+  function receiptDialog(list, change, opts) {
     list = Array.isArray(list) ? list : [list];
     const s = S().settings, inner = list.map((o) => Invoice.lines(o, s)).join('<div style="height:14px"></div>');
     const phone0 = (list.find((o) => o.phone) || {}).phone || '';
     const m = modal({
       title: list.length > 1 ? `Bills for Table ${list[0].table}` : `Bill ${list[0].id}`, body: `${change ? `<div class="banner info" style="margin-bottom:12px">${icon('cash')}<span>Return change of <b class="money">${D.money(change)}</b></span></div>` : ''}
         ${sendBox(phone0)}${inner}`,
-      actions: [...(UI.canPrint() ? [{ label: 'Print', icon: 'print', cls: 'ghost', close: false, onClick: () => printHtml(null, inner) }] : []),
+      actions: [...(Printer.ready('bill') || UI.canPrint() ? [{ label: 'Print', icon: 'print', cls: 'ghost', close: false, onClick: () => printBillFor(list) }] : []),
         { label: 'Download', icon: 'download', cls: 'ghost', close: false, onClick: () => { UI.download(`${list[0].id}${list.length > 1 ? '-table' : ''}-bill.html`, list.length > 1 ? Invoice.html(list[0], s).replace(Invoice.lines(list[0], s), inner) : Invoice.html(list[0], s), 'text/html'); } },
         { label: 'Done', cls: '' }],
     });
     bindSend(m.el, list);
+    if (opts && opts.sale && Printer.cfg.autoBill) printBillFor(list, { sale: true, auto: true });
     return m;
   }
   // digital bill: opens WhatsApp (to the guest's number) or the email app with the full GST bill as text
@@ -576,14 +615,15 @@ const Staff = (() => {
     const inDay = (t) => t >= sod && t < eod;
     const made = S().orders.filter((o) => inDay(o.createdAt) && o.status !== 'cancelled' && !(o.pay && o.pay.status === 'refunded'));
     const paidToday = S().orders.filter((o) => o.pay && (o.pay.status === 'paid' || o.pay.status === 'refunded') && inDay(o.pay.at || o.createdAt));
-    const by = { cash: 0, upi: 0, card: 0 };
+    const by = { cash: 0, upi: 0, card: 0, online: 0 };
     for (const o of paidToday) for (const p of D.payParts(o)) if (by[p.m] != null) by[p.m] += p.a;
     const refunds = S().orders.filter((o) => o.pay && o.pay.status === 'refunded' && inDay(o.pay.refundAt || 0));
     const cashRefund = sumBy(refunds, (o) => D.payParts(o).filter((p) => p.m === 'cash').reduce((a, p) => a + p.a, 0));
     const unpaid = made.filter((o) => o.pay && o.pay.status !== 'paid');
     const cancelled = S().orders.filter((o) => inDay(o.createdAt) && o.status === 'cancelled');
     const last = S().ledger.filter((e) => e.type === 'close').sort((a, b) => b.at - a.at)[0];
-    const sum = { bills: made.length, gross: sumBy(made, (o) => o.sub), disc: sumBy(made, (o) => o.disc || 0), taxable: sumBy(made, (o) => o.taxable), cgst: sumBy(made, (o) => o.cgst), sgst: sumBy(made, (o) => o.sgst), round: sumBy(made, (o) => o.round || 0), total: sumBy(made, (o) => o.total) };
+    const ownMade = made.filter((o) => !D.isEco(o));
+    const sum = { apps: sumBy(made.filter(D.isEco), (o) => o.total), bills: made.length, gross: sumBy(made, (o) => o.sub), disc: sumBy(made, (o) => o.disc || 0), taxable: sumBy(ownMade, (o) => o.taxable), cgst: sumBy(ownMade, (o) => o.cgst), sgst: sumBy(ownMade, (o) => o.sgst), round: sumBy(made, (o) => o.round || 0), total: sumBy(made, (o) => o.total) };
     const float0 = last && last.close && last.close.nextFloat != null ? last.close.nextFloat : 0;
     const row = (l, v, cls = '') => `<tr class="${cls}"><td>${l}</td><td>${v}</td></tr>`;
     const m = modal({
@@ -592,7 +632,7 @@ const Staff = (() => {
         <div><h3 class="zh">Sales</h3><table class="sumtbl"><tbody>
           ${row('Bills', D.NUM.format(sum.bills))}${row('Item total', D.money(sum.gross, true))}${sum.disc ? row('Discounts', '−' + D.money(sum.disc, true)) : ''}${row('Taxable value', D.money(sum.taxable, true))}
           ${row(`CGST`, D.money(sum.cgst, true), 'sub')}${row(`SGST`, D.money(sum.sgst, true), 'sub')}${sum.round ? row('Round off', D.money(sum.round, true), 'sub') : ''}${row('Total sales', D.money(sum.total, true), 'total')}</tbody></table>
-          <h3 class="zh">Payments taken today</h3><table class="sumtbl"><tbody>${['cash', 'upi', 'card'].map((k) => row(PM[k], D.money(by[k], true))).join('')}
+          ${sum.apps ? `<p class="faint" style="font-size:13px;margin:-8px 0 12px">Includes ${D.money(sum.apps, true)} through ordering apps; their GST is paid by the app and left out of CGST and SGST here.</p>` : ''}<h3 class="zh">Payments taken today</h3><table class="sumtbl"><tbody>${['cash', 'upi', 'card', 'online'].map((k) => row(PM[k], D.money(by[k], true))).join('')}
           ${row('Not paid yet', `${D.money(sumBy(unpaid, (o) => o.total), true)} <span class="faint">(${unpaid.length})</span>`, 'sub')}${row('Cancelled', `${cancelled.length}`, 'sub')}${refunds.length ? row('Refunds', '−' + D.money(sumBy(refunds, (o) => o.total), true), 'sub') : ''}</tbody></table></div>
         <div><h3 class="zh">Cash drawer</h3>
           <label class="field"><span>Opening cash (float)</span><input class="in" inputmode="decimal" data-zf value="${(float0 / 100).toFixed(0)}"></label>
@@ -624,7 +664,7 @@ const Staff = (() => {
       return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Day close ${z.day}</title><style>body{font-family:ui-monospace,Menlo,monospace;font-size:13px;max-width:320px;margin:16px auto}h1{font-size:18px;margin:0}table{width:100%;border-collapse:collapse}td{padding:2px 0}.r{text-align:right}hr{border:0;border-top:1px dashed #000}</style></head><body>
         <h1>${esc(s.name)}</h1><div>Day close ${esc(z.day)}<br>Printed ${new Date().toLocaleString('en-IN')}</div><hr>
         <table>${r('Bills', z.bills)}${r('Item total', (z.gross / 100).toFixed(2))}${r('Discounts', (z.disc / 100).toFixed(2))}${r('Taxable value', (z.taxable / 100).toFixed(2))}${r('CGST', (z.cgst / 100).toFixed(2))}${r('SGST', (z.sgst / 100).toFixed(2))}${r('Round off', (z.round / 100).toFixed(2))}${r('<b>Total sales</b>', '<b>' + (z.total / 100).toFixed(2) + '</b>')}</table><hr>
-        <table>${r('Cash', (z.by.cash / 100).toFixed(2))}${r('UPI', (z.by.upi / 100).toFixed(2))}${r('Card', (z.by.card / 100).toFixed(2))}${r('Not paid yet', (z.unpaid / 100).toFixed(2) + ' (' + z.unpaidCount + ')')}${r('Cancelled bills', z.cancelled)}</table><hr>
+        <table>${r('Cash', (z.by.cash / 100).toFixed(2))}${r('UPI', (z.by.upi / 100).toFixed(2))}${r('Card', (z.by.card / 100).toFixed(2))}${r('Paid on apps', ((z.by.online || 0) / 100).toFixed(2))}${r('Not paid yet', (z.unpaid / 100).toFixed(2) + ' (' + z.unpaidCount + ')')}${r('Cancelled bills', z.cancelled)}</table><hr>
         <table>${r('Opening cash', (z.float / 100).toFixed(2))}${r('Cash sales', (z.by.cash / 100).toFixed(2))}${r('Cash refunds', (-z.cashRefund / 100).toFixed(2))}${r('<b>Expected</b>', '<b>' + (z.expected / 100).toFixed(2) + '</b>')}${r('Counted', z.counted == null ? '-' : (z.counted / 100).toFixed(2))}${r('Over / short', (z.diff / 100).toFixed(2))}${r('Float for tomorrow', (z.nextFloat / 100).toFixed(2))}</table>
         ${z.note ? `<hr><div>${esc(z.note)}</div>` : ''}<hr><div>GSTIN ${esc(s.gstin)}</div></body></html>`;
     }
@@ -662,15 +702,15 @@ const Staff = (() => {
     if (o.status !== 'cancelled' && canDo('cancel')) acts.push({ label: 'Cancel order', cls: 'danger ghost', onClick: () => { setTimeout(() => cancelOrder(o.id), 30); } });
     if (p.status === 'paid' && o.status !== 'cancelled' && canDo('collect')) acts.push({ label: canDo('refund') ? 'Refund' : 'Refund (owner)', cls: 'ghost', onClick: async () => { const ok = await confirmBox(`Refund ${D.money(o.total)} for ${o.id}? Return the money the same way it was paid.`, { title: 'Refund this bill?', ok: 'Mark refunded', danger: true }); if (ok) await guarded('refund', 'A refund', async (ap) => { await D.api.patchOrder(o.id, { pay: Object.assign({}, p, { status: 'refunded', refundAt: Date.now(), refundBy: who() }, ap ? { approvedBy: ap.name } : {}) }); toast(`${o.id} refunded`); }); } });
     acts.push({ label: 'Download', icon: 'download', cls: 'ghost', close: false, onClick: () => { UI.download(`${o.id}-bill.html`, Invoice.html(o, S().settings), 'text/html'); } });
-    if (UI.canPrint()) acts.push({ label: 'Print', icon: 'print', cls: 'ghost', close: false, onClick: () => printHtml(null, Invoice.lines(o, S().settings)) });
+    if (Printer.ready('bill') || UI.canPrint()) acts.push({ label: 'Print', icon: 'print', cls: 'ghost', close: false, onClick: () => printBillFor(o) });
     const m = modal({ title: `Bill ${o.id}`, body: `<div class="row wrap" style="margin-bottom:12px">${stChip(o)}${payCell(o)}<span class="chip">${o.source === 'portal' ? 'Customer portal' : 'Counter'}</span>${(o.log || []).map((l) => `<span class="faint" style="font-size:12.5px">${l.s} ${D.time12(l.at)}</span>`).join('')}${(o.sent || []).length ? `<span class="chip ok">Sent by ${esc([...new Set(o.sent.map((x) => (x.via === 'whatsapp' ? 'WhatsApp' : 'email')))].join(' and '))}</span>` : ''}</div>${sendBox(o.phone || '')}${Invoice.lines(o, S().settings)}`, actions: acts });
     bindSend(m.el, [o]);
   }
   function csv(rows) { return rows.map((r) => r.map((v) => { const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; }).join(',')).join('\n'); }
   function exportBills() {
     const list = billsFiltered();
-    const rows = [['Invoice', 'Order', 'Date', 'Time', 'Table', 'Type', 'Items', 'Sub total', 'Discount', 'Taxable', 'CGST', 'SGST', 'Round off', 'Total', 'Payment', 'Payment status', 'Order status', 'Source']];
-    for (const o of list) rows.push([o.inv, o.id, D.dayKey(o.createdAt), D.time12(o.createdAt), o.table || '', o.type, (o.items || []).map((l) => `${l.qty} x ${l.name}`).join('; '), (o.sub / 100).toFixed(2), ((o.disc || 0) / 100).toFixed(2), (o.taxable / 100).toFixed(2), (o.cgst / 100).toFixed(2), (o.sgst / 100).toFixed(2), ((o.round || 0) / 100).toFixed(2), (o.total / 100).toFixed(2), (o.pay || {}).method === 'split' ? D.payParts(o).map((x) => `${x.m} ${(x.a / 100).toFixed(2)}`).join(' + ') : (o.pay || {}).method || '', (o.pay || {}).status || '', o.status, o.source]);
+    const rows = [['Invoice', 'Order', 'Date', 'Time', 'Table', 'Type', 'Items', 'Sub total', 'Discount', 'Taxable', 'CGST', 'SGST', 'Round off', 'Total', 'Payment', 'Payment status', 'Order status', 'Source', 'App order ID', 'GST paid by app (9(5))']];
+    for (const o of list) rows.push([o.inv, o.id, D.dayKey(o.createdAt), D.time12(o.createdAt), o.table || '', o.type, (o.items || []).map((l) => `${l.qty} x ${l.name}`).join('; '), (o.sub / 100).toFixed(2), ((o.disc || 0) / 100).toFixed(2), (o.taxable / 100).toFixed(2), (o.cgst / 100).toFixed(2), (o.sgst / 100).toFixed(2), ((o.round || 0) / 100).toFixed(2), (o.total / 100).toFixed(2), (o.pay || {}).method === 'split' ? D.payParts(o).map((x) => `${x.m} ${(x.a / 100).toFixed(2)}`).join(' + ') : (o.pay || {}).method || '', (o.pay || {}).status || '', o.status, o.source, o.extId || '', D.isEco(o) ? 'yes' : '']);
     UI.download(`bills-${bf.range}-${D.dayKey(Date.now())}.csv`, csv(rows), 'text/csv');
   }
 
@@ -758,6 +798,50 @@ const Staff = (() => {
       if (!d.id) { let base = slug(name), idn = base, k = 2; while (X().menuById[idn]) idn = base + '-' + k++; d.id = idn; }
       try { await D.api.putDish(d); toast(`${name} saved`); } catch (e) { return false; }
     }
+  }
+
+  /* ---------------- printers (this device) ---------------- */
+  let printerPreview = 'bill';
+  const PTYPES = [['none', 'No printer'], ['usb', 'USB'], ['bluetooth', 'Bluetooth'], ['serial', 'Serial or USB-serial'], ['network', 'Network (LAN or Wi-Fi)'], ['browser', 'Browser print dialog']];
+  function printersPage() {
+    const c = Printer.cfg, sup = Printer.support();
+    const slotBox = (slot) => {
+      const p = c[slot], kot = slot === 'kot', types = kot ? [['same', 'Same as the bill printer'], ...PTYPES] : PTYPES;
+      const needsConnect = ['usb', 'bluetooth', 'serial'].includes(p.type), unsupported = needsConnect && !sup[p.type];
+      const status = p.type === 'none' ? 'Off' : p.type === 'same' ? 'Uses the bill printer' : p.type === 'browser' ? 'Prints through the browser dialog' : p.type === 'network' ? (p.host ? `Sends to ${esc(p.host)}:${esc(p.port)} through the print bridge` : 'Enter the printer’s IP address') : unsupported ? 'This browser can’t reach this kind of printer. Use Chrome or Edge on a computer or Android.' : Printer.isConnected(slot) ? `Connected: ${esc(p.label)}` : p.label ? `${esc(p.label)}, reconnects when you print` : 'Not connected yet';
+      return `<div class="box"><h2>${icon(kot ? 'bell' : 'receipt')}${kot ? 'Kitchen printer (KOT)' : 'Bill printer'}</h2>
+        <div class="grid2"><label class="field"><span>Connection</span><select class="in" data-prn="${slot}.type">${types.map(([k, l]) => `<option value="${k}" ${p.type === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        ${p.type !== 'same' ? `<label class="field"><span>Paper</span><select class="in" data-prn="${slot}.width"><option value="48" ${+p.width === 48 ? 'selected' : ''}>80 mm (48 characters)</option><option value="32" ${+p.width === 32 ? 'selected' : ''}>58 mm (32 characters)</option></select></label>` : '<span></span>'}</div>
+        ${p.type === 'network' ? `<div class="grid3"><label class="field"><span>Printer IP</span><input class="in" data-prn="${slot}.host" value="${esc(p.host)}" placeholder="192.168.1.50"></label><label class="field"><span>Port</span><input class="in" data-prn="${slot}.port" value="${esc(p.port)}" inputmode="numeric"></label><label class="field"><span>Print bridge</span><input class="in" data-prn="${slot}.bridge" value="${esc(p.bridge)}"></label></div>
+          <small class="faint">Browsers can’t open a printer’s network port directly. Run <code>node tools/print-bridge.mjs</code> on a computer in the café and leave it running; it passes jobs to the printer.</small>` : ''}
+        ${p.type === 'serial' ? `<label class="field"><span>Baud rate</span><select class="in" data-prn="${slot}.baud">${[9600, 19200, 38400, 115200].map((b) => `<option ${+p.baud === b ? 'selected' : ''}>${b}</option>`).join('')}</select></label>` : ''}
+        ${!kot && p.type !== 'none' ? `<div class="ctl"><label><span class="t">Open the cash drawer on cash sales<small>For a drawer plugged into the printer (RJ11).</small></span><span class="switch"><input type="checkbox" data-prn="bill.drawer" ${p.drawer ? 'checked' : ''}></span></label>
+          <label><span class="t">QR code on bills<small>A UPI pay code on unpaid bills, the order ID on paid ones. Skipped by printers without QR support.</small></span><span class="switch"><input type="checkbox" data-prn="bill.qr" ${p.qr ? 'checked' : ''}></span></label></div>` : ''}
+        ${p.type !== 'none' && p.type !== 'same' ? `<label class="field" style="max-width:160px"><span>Copies</span><select class="in" data-prn="${slot}.copies">${[1, 2, 3].map((n) => `<option ${+p.copies === n ? 'selected' : ''}>${n}</option>`).join('')}</select></label>` : ''}
+        <div class="row wrap"><span class="prstatus ${Printer.isConnected(slot) ? 'on' : ''}">${status}</span><span class="grow"></span>
+          ${needsConnect && !unsupported ? `<button class="btn sm ghost" data-a="prconnect" data-slot="${slot}">${icon('refresh', 'sm')}${p.label ? 'Change printer' : 'Connect'}</button>` : ''}
+          ${p.type !== 'none' && p.type !== 'same' && !unsupported ? `<button class="btn sm" data-a="prtest" data-slot="${slot}">${icon('print', 'sm')}Test print</button>` : ''}</div></div>`;
+    };
+    const sample = S().orders.find((o) => o.status !== 'cancelled') || Object.assign({ id: (S().settings.prefix || 'KM') + '-1001', inv: `${S().settings.prefix || 'KM'}/${D.fy()}/1001`, createdAt: Date.now(), table: 3, type: 'dine-in', rate: S().settings.gstRate, items: [{ name: 'Cappuccino', price: 220, qty: 2, opts: ['Large'] }, { name: 'Butter Croissant', price: 140, qty: 1 }], pay: { method: 'cash', status: 'paid', change: 2000 } }, D.bill([{ price: 220, qty: 2 }, { price: 140, qty: 1 }], { rate: S().settings.gstRate }));
+    const w = +(c[printerPreview === 'kot' ? Printer.kotSlot() : 'bill'].width || 48);
+    const text = Printer.preview(printerPreview === 'kot' ? Printer.kot(sample, w) : Printer.bill(sample, S().settings, w, { qr: c.bill.qr }));
+    return head('Printers', 'Thermal printers on this device for kitchen tickets (KOT) and bills. Each device keeps its own printers.') +
+      `<div class="setup">${slotBox('bill')}${slotBox('kot')}
+        <div class="box"><h2>${icon('spark')}Automatic printing on this device</h2><div class="ctl">
+          <label><span class="t">Print a KOT for every new order<small>Orders from the customer app, the counter and Zomato or Swiggy. Turn this on for one device only, usually the kitchen or counter tablet; each order is marked once its KOT prints, so another device won’t print it again.</small></span><span class="switch"><input type="checkbox" data-prn="autoKot" ${c.autoKot ? 'checked' : ''}></span></label>
+          <label><span class="t">Print the bill after every payment<small>On the counter device, after billing, collecting or settling a table.</small></span><span class="switch"><input type="checkbox" data-prn="autoBill" ${c.autoBill ? 'checked' : ''}></span></label></div>
+          <label class="field"><span>Name of this device</span><input class="in" data-prn="device" value="${esc(c.device)}" placeholder="Kitchen tablet" maxlength="30"></label>
+          ${c.autoKot && Printer.cfg[Printer.kotSlot()].type === 'browser' ? `<div class="banner">${icon('alert')}<span>Automatic KOTs need a USB, Bluetooth, serial or network printer. The browser dialog needs a tap for each print.</span></div>` : ''}</div>
+        <div class="box"><h2>${icon('receipt')}What prints <span class="faint">${w} characters a line</span></h2><div class="seg" style="margin-bottom:10px"><button data-a="prsample" data-which="bill" aria-pressed="${printerPreview === 'bill'}">Bill</button><button data-a="prsample" data-which="kot" aria-pressed="${printerPreview === 'kot'}">KOT</button></div>
+          <pre class="thermal" style="width:${w + 2}ch">${esc(text)}</pre></div>
+        <div class="box"><h2>${icon('info')}Which printers work</h2><ul class="muted" style="margin:0;padding-left:18px;display:grid;gap:6px;font-size:14px">
+          <li>Any ESC/POS thermal printer, 58 mm or 80 mm (Epson TM, TVS RP, Everycom, Rugtek, Xprinter and most others).</li>
+          <li><b>USB</b>: Chrome or Edge on Android, Mac, Linux or ChromeOS. On Windows the printer driver usually holds the printer: use Network, or the browser print dialog.</li>
+          <li><b>Bluetooth</b>: Chrome on Android, Mac or Windows with Bluetooth LE printers. Not on iPhone or iPad.</li>
+          <li><b>Network</b>: any device in the café, through the small print bridge (<code>tools/print-bridge.mjs</code>).</li>
+          <li>The page must be on HTTPS or localhost. Inside the Claude preview, devices are blocked: use your own hosting.</li>
+          <li>${sup.usb ? '✓' : '✗'} USB, ${sup.bluetooth ? '✓' : '✗'} Bluetooth, ${sup.serial ? '✓' : '✗'} serial available in this browser.</li></ul></div>
+      </div>`;
   }
 
   /* ---------------- team: people, roles and PINs (owner only) ---------------- */
@@ -850,7 +934,7 @@ const Staff = (() => {
     for (const o of ready) { if (!boardSeen.has(o.id)) { if (boardPrimed) fresh.push(o.id); boardSeen.add(o.id); } }
     if (fresh.length && soundOn) UI.chime();
     boardPrimed = true;
-    const num = (o, flash) => `<div class="tv-n${flash ? ' flash' : ''}">${esc(String(o.no || o.id))}<small>${o.table ? 'Table ' + o.table : o.pickupAt ? 'Pickup ' + D.time12(o.pickupAt) : 'Takeaway'}</small></div>`;
+    const num = (o, flash) => `<div class="tv-n${flash ? ' flash' : ''}">${esc(String(o.no || o.id))}<small>${o.table ? 'Table ' + o.table : o.channel ? esc(D.CHANNELS[o.channel].label) : o.pickupAt ? 'Pickup ' + D.time12(o.pickupAt) : 'Takeaway'}</small></div>`;
     clearInterval(boardClock);
     boardClock = setInterval(() => { const c = $('.tv-h .clock', root); if (c) c.textContent = D.time12(Date.now()); else clearInterval(boardClock); }, 15000);
     return `<div class="tvboard" role="region" aria-label="Order status">
@@ -962,7 +1046,8 @@ const Staff = (() => {
   /* ---------------- reports ---------------- */
   function reports() {
     const r = rangeOf(rf.range), list = S().orders.filter((o) => inRange(o, r)), good = list.filter(sales);
-    const gross = sumBy(good, (o) => o.total), taxable = sumBy(good, (o) => o.taxable), gst = sumBy(good, (o) => o.cgst + o.sgst), disc = sumBy(good, (o) => o.disc || 0);
+    const own = good.filter((o) => !D.isEco(o)), apps = good.filter(D.isEco);
+    const gross = sumBy(good, (o) => o.total), taxable = sumBy(own, (o) => o.taxable), gst = sumBy(own, (o) => o.cgst + o.sgst), disc = sumBy(good, (o) => o.disc || 0);
     const refunds = list.filter((o) => o.pay && o.pay.status === 'refunded'), cancelled = list.filter((o) => o.status === 'cancelled');
     const days = []; for (let t = D.startOfDay(r[0] || (good.length ? good[good.length - 1].createdAt : Date.now())); t < r[1]; t += 864e5) days.push(t);
     const byDay = days.slice(-62).map((t) => { const l = good.filter((o) => o.createdAt >= t && o.createdAt < t + 864e5); return { t, l, v: sumBy(l, (o) => o.total) }; });
@@ -972,12 +1057,12 @@ const Staff = (() => {
     const itemTot = sumBy(itemRows, ([, it]) => it.v) || 1;
     let cogs = 0; for (const [id, it] of itemRows) { const d = X().menuById[id]; if (d) cogs += D.foodCost(d, X().stockById) * it.q; }
     const paidL = good.filter((o) => o.pay && o.pay.status === 'paid');
-    const pay = ['upi', 'card', 'cash'].map((k) => ({ l: { upi: 'UPI', card: 'Card', cash: 'Cash' }[k], c: C[k], v: paidL.reduce((a, o) => a + D.payParts(o).filter((p) => p.m === k).reduce((x, p) => x + p.a, 0), 0) }));
+    const pay = ['upi', 'card', 'cash', 'online'].map((k) => ({ l: { upi: 'UPI', card: 'Card', cash: 'Cash', online: 'Apps' }[k], c: C[k], v: paidL.reduce((a, o) => a + D.payParts(o).filter((p) => p.m === k).reduce((x, p) => x + p.a, 0), 0) }));
     const unpaid = sumBy(good.filter((o) => o.pay && o.pay.status !== 'paid'), (o) => o.total);
     return head('Reports', 'Sales, GST and food cost for the period. Cancelled and refunded bills are left out of sales.', `<button class="btn ghost sm" data-a="gstcsv">${icon('download', 'sm')}GST summary CSV</button><button class="btn ghost sm" data-a="itemcsv">${icon('download', 'sm')}Item sales CSV</button>`) +
       `<div class="toolbar"><div class="pills">${[['today', 'Today'], ['yesterday', 'Yesterday'], ['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['month', 'This month']].map(([k, l]) => `<button class="pill" data-rr="${k}" aria-pressed="${rf.range === k}">${l}</button>`).join('')}</div></div>
       <div class="kpis"><div class="kpi"><div class="l">Gross sales</div><div class="v money">${D.money(gross)}</div><div class="d">${good.length} bills</div></div>
-        <div class="kpi"><div class="l">Net sales, before GST</div><div class="v money">${D.money(taxable)}</div><div class="d">${disc ? `${D.money(disc)} in discounts` : 'No discounts'}</div></div>
+        <div class="kpi"><div class="l">Net sales, before GST</div><div class="v money">${D.money(taxable + sumBy(apps, (o) => o.taxable))}</div><div class="d">${apps.length ? `${D.money(sumBy(apps, (o) => o.taxable))} through apps` : disc ? `${D.money(disc)} in discounts` : 'No discounts'}</div></div>
         <div class="kpi"><div class="l">GST collected</div><div class="v money">${D.money(gst)}</div><div class="d">CGST ${D.money(gst / 2)}, SGST ${D.money(gst / 2)}</div></div>
         <div class="kpi"><div class="l">Food cost estimate</div><div class="v money">${D.money(Math.round(cogs / 100) * 100)}</div><div class="d">${taxable ? Math.round((cogs / taxable) * 100) + '% of net sales, from recipes' : 'From recipes'}</div></div></div>
       ${good.length ? `<div class="dash"><div class="col">
@@ -985,8 +1070,9 @@ const Staff = (() => {
         <div class="box"><h2>Item sales</h2><div class="tblwrap" style="border:0;max-height:420px"><table class="tbl"><thead><tr><th>Dish</th><th class="r">Qty</th><th class="r">Sales</th><th class="r">Share</th></tr></thead><tbody>
           ${itemRows.map(([, it]) => `<tr><td>${esc(it.name)}</td><td class="r num">${it.q}</td><td class="r money">${D.money(it.v)}</td><td class="r num">${Math.round((it.v / itemTot) * 100)}%</td></tr>`).join('')}</tbody></table></div></div>
         <div class="box"><h2>GST summary <span class="faint">For GSTR-1 and GSTR-3B, SAC ${esc(S().settings.sac || '996331')}</span></h2><div class="tblwrap" style="border:0;max-height:360px"><table class="tbl"><thead><tr><th>Date</th><th class="r">Bills</th><th class="r">Taxable</th><th class="r">CGST</th><th class="r">SGST</th><th class="r">Total</th></tr></thead><tbody>
-          ${byDay.filter((d) => d.l.length).reverse().map((d) => `<tr><td>${D.dateShort(d.t)}</td><td class="r num">${d.l.length}</td><td class="r money">${D.money(sumBy(d.l, (o) => o.taxable), true)}</td><td class="r money">${D.money(sumBy(d.l, (o) => o.cgst), true)}</td><td class="r money">${D.money(sumBy(d.l, (o) => o.sgst), true)}</td><td class="r money">${D.money(sumBy(d.l, (o) => o.total), true)}</td></tr>`).join('')}
-          <tr><td><b>Total</b></td><td class="r num"><b>${good.length}</b></td><td class="r money"><b>${D.money(taxable, true)}</b></td><td class="r money"><b>${D.money(sumBy(good, (o) => o.cgst), true)}</b></td><td class="r money"><b>${D.money(sumBy(good, (o) => o.sgst), true)}</b></td><td class="r money"><b>${D.money(gross, true)}</b></td></tr></tbody></table></div></div>
+          ${byDay.map((d) => Object.assign({}, d, { l: d.l.filter((o) => !D.isEco(o)) })).filter((d) => d.l.length).reverse().map((d) => `<tr><td>${D.dateShort(d.t)}</td><td class="r num">${d.l.length}</td><td class="r money">${D.money(sumBy(d.l, (o) => o.taxable), true)}</td><td class="r money">${D.money(sumBy(d.l, (o) => o.cgst), true)}</td><td class="r money">${D.money(sumBy(d.l, (o) => o.sgst), true)}</td><td class="r money">${D.money(sumBy(d.l, (o) => o.total), true)}</td></tr>`).join('')}
+          <tr><td><b>Total</b></td><td class="r num"><b>${own.length}</b></td><td class="r money"><b>${D.money(taxable, true)}</b></td><td class="r money"><b>${D.money(sumBy(own, (o) => o.cgst), true)}</b></td><td class="r money"><b>${D.money(sumBy(own, (o) => o.sgst), true)}</b></td><td class="r money"><b>${D.money(sumBy(own, (o) => o.total), true)}</b></td></tr></tbody></table></div>
+          ${apps.length ? `<p class="muted" style="margin:10px 0 0">Through ordering apps (section 9(5), the app pays the GST): ${Object.keys(D.CHANNELS).map((k) => { const l = apps.filter((o) => o.channel === k); return l.length ? `${D.CHANNELS[k].label} ${l.length} order${l.length === 1 ? '' : 's'}, ${D.money(sumBy(l, (o) => o.taxable), true)}` : ''; }).filter(Boolean).join('; ')}. Report these as supplies through e-commerce operators, not in your own taxable value.</p>` : ''}</div>
       </div><div class="col">
         <div class="box"><h2>By category</h2>${hbars(Object.entries(catSum).sort((a, b) => b[1] - a[1]).map(([l, v]) => ({ l, v })), (r2) => D.money(r2.v))}</div>
         <div class="box"><h2>By payment <span class="faint">Paid bills</span></h2>${sumBy(pay, (p) => p.v) ? split(pay) : '<p class="muted" style="margin:0">No paid bills in this period.</p>'}${unpaid ? `<p class="muted" style="margin:10px 0 0">${D.money(unpaid)} not yet paid.</p>` : ''}</div>
@@ -994,10 +1080,12 @@ const Staff = (() => {
       </div></div>` : `<div class="box"><div class="empty">${icon('chart')}<h2>No sales in this period</h2><p>Pick a longer period, or add sample sales in Setup.</p></div></div>`}`;
   }
   function exportGST() {
-    const r = rangeOf(rf.range), good = S().orders.filter((o) => inRange(o, r) && sales(o));
+    const r = rangeOf(rf.range), all = S().orders.filter((o) => inRange(o, r) && sales(o)), good = all.filter((o) => !D.isEco(o));
     const by = {}; for (const o of good) { const k = D.dayKey(o.createdAt); by[k] = by[k] || { n: 0, t: 0, c: 0, s: 0, g: 0 }; by[k].n++; by[k].t += o.taxable; by[k].c += o.cgst; by[k].s += o.sgst; by[k].g += o.total; }
     const rows = [['Date', 'Bills', 'Taxable value', 'CGST', 'SGST', 'Total', 'SAC', 'GST rate']];
     for (const k of Object.keys(by).sort()) rows.push([k, by[k].n, (by[k].t / 100).toFixed(2), (by[k].c / 100).toFixed(2), (by[k].s / 100).toFixed(2), (by[k].g / 100).toFixed(2), S().settings.sac || '996331', S().settings.gstRate + '%']);
+    const appRows = {}; for (const o of all.filter(D.isEco)) { const k = D.dayKey(o.createdAt) + ' ' + o.channel; appRows[k] = appRows[k] || { n: 0, t: 0 }; appRows[k].n++; appRows[k].t += o.taxable; }
+    if (Object.keys(appRows).length) { rows.push([]); rows.push(['Through ordering apps, section 9(5): GST paid by the app', 'Orders', 'Value']); for (const k of Object.keys(appRows).sort()) rows.push([k, appRows[k].n, (appRows[k].t / 100).toFixed(2)]); }
     UI.download(`gst-summary-${rf.range}-${D.dayKey(Date.now())}.csv`, csv(rows), 'text/csv');
   }
   function exportItems() {
@@ -1072,6 +1160,11 @@ const Staff = (() => {
     if (a === 'pclear') { Object.assign(pos, { lines: [], disc: '', phone: '', redeem: false }); refreshTicket(); }
     if (a === 'pkot') posSendKot();
     if (a === 'tadd') memberEditor(null);
+    if (a === 'drawer') { try { await Printer.openDrawer(); } catch (e) { toast(e.message || 'Could not open the drawer', 'bad'); } }
+    if (a === 'papp') posAppOrder();
+    if (a === 'prconnect') { const slot = el.dataset.slot; try { const h = await Printer.connect(slot); if (h) toast(`${h.name} connected`); } catch (e) { toast(e.name === 'NotFoundError' ? 'No printer chosen' : e.message || 'Could not connect', 'warn', 4000); } render(); }
+    if (a === 'prtest') { const slot = el.dataset.slot; try { await Printer.printTest(slot); toast('Test page sent'); } catch (e) { toast(e.message || 'Could not print', 'bad', 4000); } }
+    if (a === 'prsample') { printerPreview = el.dataset.which; render(); }
     if (a === 'noticesave') { const v = ($('[data-notice]', root).value || '').trim(); await D.api.setSettings({ notice: v }); toast(v ? 'Message is live on the menu' : 'Message removed'); }
     if (a === 'noticeclear') { await D.api.setSettings({ notice: '' }); toast('Message removed'); }
     if (a === 'zreport') dayClose();
@@ -1115,7 +1208,7 @@ const Staff = (() => {
     if ((el = g('[data-a]'))) return act(el.dataset.a, el);
     if ((el = g('[data-next]'))) return advance(el.dataset.next, el.dataset.to);
     if ((el = g('[data-cancel]'))) return cancelOrder(el.dataset.cancel);
-    if ((el = g('[data-kot]'))) { const o = S().orders.find((x) => x.id === el.dataset.kot); if (o) { if (UI.canPrint()) printHtml(null, kotText(o).replace(/^[\s\S]*<body>|<\/body>[\s\S]*$/g, '')); else UI.download(`KOT-${o.id}.html`, kotText(o), 'text/html'); } return; }
+    if ((el = g('[data-kot]'))) { const o = S().orders.find((x) => x.id === el.dataset.kot); if (o) printKotFor(o, !!o.kotAt); return; }
     if ((el = g('[data-kf]'))) { kf.type = el.dataset.kf; return render(); }
     if ((el = g('[data-bill]'))) return billDialog(el.dataset.bill);
     if ((el = g('[data-collect]'))) return collect(el.dataset.collect);
@@ -1125,6 +1218,7 @@ const Staff = (() => {
     if ((el = g('[data-psettle]'))) return settleTable(el.dataset.psettle);
     if ((el = g('[data-pdec]'))) { const i = +el.dataset.pdec; if (pos.lines[i]) { pos.lines[i].qty--; if (pos.lines[i].qty <= 0) pos.lines.splice(i, 1); } return refreshTicket(); }
     if ((el = g('[data-pt]'))) { pos.type = el.dataset.pt; return refreshTicket(); }
+    if ((el = g('[data-pch]'))) { pos.channel = el.dataset.pch; return refreshTicket(); }
     if ((el = g('[data-pdm]'))) { pos.discMode = el.dataset.pdm; return refreshTicket(); }
     if ((el = g('[data-pc]'))) { pos.cat = el.dataset.pc; $$('[data-pc]', root).forEach((b) => b.setAttribute('aria-pressed', b === el)); return refreshTiles(); }
     if ((el = g('[data-pay]'))) return posCharge(el.dataset.pay);
@@ -1144,6 +1238,7 @@ const Staff = (() => {
   function onInput(e) {
     const t = e.target;
     if (t.matches('[data-pq]')) { pos.q = t.value; refreshTiles(); }
+    if (t.matches('[data-pext]')) pos.ext = t.value;
     if (t.matches('[data-pdisc]')) { pos.disc = t.value; refreshTotals(); }
     if (t.matches('[data-pphone]')) { pos.phone = t.value; if (!D.cleanPhone(pos.phone)) pos.redeem = false; refreshTotals(); }
     if (t.matches('[data-predeem]')) { pos.redeem = t.checked; refreshTotals(); }
@@ -1152,6 +1247,11 @@ const Staff = (() => {
     if (t.matches('[data-sq]')) { sf.q = t.value; clearTimeout(onInput.t); onInput.t = setTimeout(() => { render(); const i = $('[data-sq]', root); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 250); }
   }
   function onChange(e) {
+    if (e.target.matches && e.target.matches('[data-prn]')) {
+      const [a, b] = e.target.dataset.prn.split('.'), v = e.target.type === 'checkbox' ? e.target.checked : ['width', 'port', 'copies', 'baud'].includes(b) ? +e.target.value : e.target.value;
+      const c = JSON.parse(JSON.stringify(Printer.cfg)); if (b) { c[a][b] = v; if (b === 'type') c[a].label = ''; } else c[a] = v;
+      Printer.save(c); if (b !== 'host' && b !== 'bridge' && a !== 'device') render(); return;
+    }
     if (e.target.matches && e.target.matches('[data-predeem]')) { pos.redeem = e.target.checked; refreshTotals(); return; }
     if (e.target.matches && e.target.matches('[data-ctl],[data-num],[data-tlim]') && !canDo('settings')) { toast('Only an owner can change this', 'warn'); render(); return; }
     if (e.target.matches && e.target.matches('[data-tlim]')) { const v = Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 0)); D.api.setSettings({ cashierMaxDisc: v }).then(() => toast(`Cashiers can give up to ${v}% off`)); return; }
@@ -1180,11 +1280,20 @@ const Staff = (() => {
     for (const o of list) {
       if (seen.has(o.id)) continue;
       seen.add(o.id);
-      if (o.status === 'new' && Date.now() - o.createdAt < 5 * 60000 && me() && page !== 'board' && document.body.classList.contains('s-mode') && o.source === 'portal') {
-        toast(`New order ${o.id}, ${o.table ? 'Table ' + o.table : 'Takeaway'}, ${D.money(o.total)}`, 'ok', 5000);
+      if (Printer.cfg.autoKot && me() && o.status === 'new' && !o.kotAt && Date.now() - o.createdAt < 10 * 60000) autoKot(o);
+      if (o.status === 'new' && Date.now() - o.createdAt < 5 * 60000 && me() && page !== 'board' && document.body.classList.contains('s-mode') && (o.source === 'portal' || o.channel)) {
+        toast(`New order ${o.id}, ${D.whereLabel(o)}, ${D.money(o.total)}`, 'ok', 5000);
         if (soundOn) UI.chime();
       }
     }
+  }
+
+  // one device prints each new order's KOT; the order is marked so another device set to auto-print skips it
+  async function autoKot(o) {
+    const fresh = S().orders.find((x) => x.id === o.id) || o; if (fresh.kotAt) return;
+    if (!Printer.ready(Printer.kotSlot()) || Printer.cfg[Printer.kotSlot()].type === 'browser') return;
+    try { if (await Printer.printKot(fresh)) await D.api.patchOrder(o.id, { kotAt: Date.now(), kotBy: Printer.cfg.device || who() }); }
+    catch (e) { toast(`KOT ${o.id} did not print: ${e.message || 'printer error'}. Tap KOT on the order to retry.`, 'bad', 6000); }
   }
 
   /* ---------------- public ---------------- */

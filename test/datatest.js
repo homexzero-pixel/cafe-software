@@ -59,3 +59,7 @@ const tm = D.team(D.SETTINGS); assert(tm.length === 1 && tm[0].role === 'owner' 
 const st3 = Object.assign({}, D.SETTINGS, { pinSalt: 'x', staff: [{ id: 'a', name: 'Asha', role: 'cashier', pinHash: D.pinHash('2468', 'x') }] });
 assert(D.findByPin(st3, '2468').name === 'Asha' && !D.findByPin(st3, '1234'), 'PIN finds the right person');
 assert(D.can('cashier', 'bill') && !D.can('cashier', 'refund') && !D.can('staff', 'bill') && D.can('owner', 'refund'), 'role permissions');
+// online ordering apps (GST paid by the app under 9(5))
+assert(D.appOrderId('zomato', '5123456789', []) === 'ZO-456789' && D.appOrderId('zomato', '5123456789', [{ id: 'ZO-456789' }]) === 'ZO-456789-2', 'app order IDs stay unique');
+assert(D.whereLabel({ channel: 'swiggy', type: 'delivery' }) === 'Swiggy delivery' && D.whereLabel({ table: 4 }) === 'Table 4', 'where labels');
+const eb = D.bill([{ price: 250, qty: 2 }], { rate: 0 }); assert(eb.cgst === 0 && eb.sgst === 0 && eb.total === 50000, 'app orders carry no café GST');
