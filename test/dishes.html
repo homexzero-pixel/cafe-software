@@ -1,0 +1,31 @@
+<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;background:#E9ECEF;font:12px sans-serif}#g{display:grid;grid-template-columns:repeat(var(--cols,6),var(--sz,200px));gap:4px;padding:4px}figure{margin:0;background:#E9ECEF;text-align:center}img{width:var(--sz,200px);height:var(--sz,200px);display:block}</style></head>
+<body><div id="g"></div><canvas id="c" width="8" height="8" style="position:absolute;left:-99px"></canvas>
+<script src="../src/engine.js"></script><script src="../src/models.js"></script>
+<script>
+window.onerror = (m, s, l, c, e) => { document.title = 'ERR ' + m + ' @' + l; };
+const r = new E3.Renderer(document.getElementById('c'));
+const S = 400, t = r.target(S, S);
+const g = document.getElementById('g');
+const qs = new URLSearchParams(location.search); if (qs.get('sz')) { document.body.style.setProperty('--sz', qs.get('sz') + 'px'); document.body.style.setProperty('--cols', qs.get('cols') || 3); }
+const only = location.hash ? location.hash.slice(1).split(',') : null;
+const az = +(new URLSearchParams(location.search).get('az') || 0.5), el = +(new URLSearchParams(location.search).get('el') || 0.62);
+const t0 = performance.now(); const times = {};
+for (const [key, label] of Dishes.LIST) {
+  if (only && !only.includes(key)) continue;
+  const a = performance.now();
+  const model = E3.bake(r, Dishes.get(key));
+  times[key] = Math.round(performance.now() - a);
+  const target = [model.center[0], model.center[1] * 0.75, model.center[2]];
+  const fov = 0.55, dist = model.radius / Math.sin(fov / 2) * 1.02;
+  const cam = E3.orbitCam(target, dist, az, el, fov, 1);
+  const scene = { items: [{ model, matrix: E3.M4.id() }], light: E3.LIGHTS.studio,
+    ground: { mode: 'catcher', y: 0, radius: model.radius * 3, shadow: 0.32, center: [model.center[0], 0, model.center[2]] },
+    blobs: [[model.center[0], model.center[2], model.footprint * 1.05, 0.35]],
+    shadowBox: { center: model.center, radius: model.radius * 2.0 } };
+  r.render(scene, cam, { fbo: t.fbo, w: S, h: S, clear: [0, 0, 0, 0] });
+  const c = r.readTarget(t);
+  const f = document.createElement('figure'); const im = new Image(); im.src = c.toDataURL(); f.appendChild(im);
+  const cap = document.createElement('figcaption'); cap.textContent = label + ' ' + times[key] + 'ms'; f.appendChild(cap); g.appendChild(f);
+}
+document.title = 'DONE ' + Math.round(performance.now() - t0) + 'ms';
+</script></body></html>

@@ -1,0 +1,3 @@
+const QR = require('../src/qr.js'); const sharp = require('sharp'); const fs = require('fs');
+const cases = ['https://claude.ai/artifact/0b8f2c1e-1234-4abc-9def-001122334455#table-12', 'upi://pay?pa=kaapimarble@okaxis&pn=Kaapi%20%26%20Marble&am=231.00&cu=INR&tn=Order%20KM-1043&tr=KM-1043', 'KM-1043', 'Hello ₹ café — ünïcödé ✓', 'x'.repeat(300)];
+(async () => { for (let i = 0; i < cases.length; i++) { const s = QR.svg(cases[i]); const q = QR.encode(cases[i]); await sharp(Buffer.from(s)).resize(q.size*8+64, q.size*8+64, {kernel:'nearest'}).png().toFile(require('path').join(__dirname, `qr${i}.png`)); console.log(i, 'ver', q.ver, q.ecl); } })();
